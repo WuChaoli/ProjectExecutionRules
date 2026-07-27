@@ -10,8 +10,10 @@ from project_execution_rules.catalog import (
     validate_catalog_resources,
 )
 from project_execution_rules.frontmatter import parse_frontmatter
+from project_execution_rules.managed import ManagedManifest, sha256_bytes
 from project_execution_rules.models import CheckIssue, CheckReport, ProjectState
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.rendering import route_row
 from project_execution_rules.yaml_utils import as_mapping, as_string_tuple, load_mapping
 
 LinkVerifier = Callable[[Path, Path], bool]
@@ -39,6 +41,43 @@ def _issue(code: str, message: str, **evidence: object) -> CheckIssue:
     return CheckIssue(code=code, message=message, evidence=dict(evidence))
 
 
+def _managed_user_issues(paths: UserPaths) -> list[CheckIssue]:
+    manifest_path = paths.state_home / "managed-user.json"
+    if not manifest_path.is_file():
+        return [_issue("MANAGED_MANIFEST_MISSING", "user resource manifest is missing")]
+    try:
+        manifest = ManagedManifest.load(manifest_path)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        return [_issue("MANAGED_MANIFEST_INVALID", f"user resource manifest is invalid: {error}")]
+    issues: list[CheckIssue] = []
+    for entry in manifest.entries:
+        target = paths.home / entry.logical_path
+        try:
+            target.absolute().relative_to(paths.home.resolve())
+            target.parent.resolve(strict=False).relative_to(paths.home.resolve())
+        except ValueError:
+            issues.append(
+                _issue(
+                    "MANAGED_RESOURCE_PATH_INVALID",
+                    f"managed resource path escapes the user home: {entry.logical_path}",
+                )
+            )
+            continue
+        if (
+            target.is_symlink()
+            or not target.is_file()
+            or sha256_bytes(target.read_bytes()) != entry.sha256
+        ):
+            issues.append(
+                _issue(
+                    "MANAGED_RESOURCE_DRIFTED",
+                    f"managed user resource is missing or modified: {entry.logical_path}",
+                    target=str(target),
+                )
+            )
+    return issues
+
+
 def check_project(
     root: Path,
     paths: UserPaths,
@@ -59,6 +98,7 @@ def check_project(
             ),
         )
     issues = list(validate_catalog_resources(load_builtin_catalog()))
+    issues.extend(_managed_user_issues(paths))
     try:
         raw = load_mapping(
             ruleset_path.read_text(encoding="utf-8"),
@@ -112,7 +152,9 @@ def check_project(
     if len(agents_text.encode("utf-8")) > 8192:
         issues.append(_issue("AGENTS_BUDGET_EXCEEDED", "AGENTS.md exceeds 8 KiB"))
     for domain in domains:
-        expected = f".rules/{domain}-rules.md"
+        if domain not in catalog.rules:
+            continue
+        expected = route_row(domain, catalog.rules[domain])
         if expected not in agents_text:
             issues.append(
                 _issue(
@@ -127,6 +169,9 @@ def check_project(
     )
     seen_override_ids: set[str] = set()
     for domain in overrides:
+        if domain not in catalog.rules:
+            issues.append(_issue("RULE_UNKNOWN", f"unknown Override domain: {domain}"))
+            continue
         override = resolved / ".rules" / f"{domain}-rules.override.md"
         relative = override.relative_to(resolved).as_posix()
         if not override.is_file():
@@ -141,7 +186,17 @@ def check_project(
         text = override.read_text(encoding="utf-8")
         if len(text.encode("utf-8")) > 4096:
             issues.append(_issue("OVERRIDE_BUDGET_EXCEEDED", f"Override exceeds 4 KiB: {domain}"))
-        metadata, body = parse_frontmatter(text)
+        try:
+            metadata, body = parse_frontmatter(text)
+        except ValueError as error:
+            issues.append(
+                _issue(
+                    "OVERRIDE_FRONTMATTER_INVALID",
+                    f"Override frontmatter is invalid: {domain}",
+                    error=str(error),
+                )
+            )
+            continue
         base_paths = set(catalog.rules[domain].paths)
         override_paths = set(
             as_string_tuple(metadata.get("paths", ()), name=f"{domain} Override paths")

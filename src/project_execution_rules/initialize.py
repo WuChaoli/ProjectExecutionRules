@@ -8,6 +8,7 @@ from pathlib import Path
 
 from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.detection import ProjectFacts
+from project_execution_rules.doctor import probe_symlink_capability
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.managed import sha256_bytes
 from project_execution_rules.models import Change, ChangePlan, OperationReport
@@ -144,9 +145,17 @@ def initialize_project(
     symlink_factory: Callable[[str, Path], None] = os.symlink,
     link_verifier: Callable[[Path, Path], bool] | None = None,
     stage_files: Callable[[tuple[Path, ...]], None] | None = None,
+    symlink_probe: Callable[[], bool] | None = None,
 ) -> OperationReport:
     if not confirmed:
         return OperationReport(changed=False, transaction_id=None, changes=())
+    probe = symlink_probe or (lambda: probe_symlink_capability(paths))
+    if not probe():
+        raise ProjectRulesError(
+            "SYMLINK_UNAVAILABLE",
+            "Windows symbolic link creation is unavailable",
+            remediation="Enable Windows Developer Mode or grant link privileges.",
+        )
     verifier = link_verifier or _actual_link_verifier
     transaction = FileTransaction(
         paths.state_home,

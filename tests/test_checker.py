@@ -13,6 +13,7 @@ from project_execution_rules.initialize import (
 from project_execution_rules.install import install_user_resources, plan_user_install
 from project_execution_rules.models import ProjectState
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.status import get_project_status
 
 
 def _healthy_project(tmp_path: Path) -> tuple[Path, UserPaths, set[str]]:
@@ -51,6 +52,7 @@ def _healthy_project(tmp_path: Path) -> tuple[Path, UserPaths, set[str]]:
             link.read_text(encoding="utf-8") == str(target.resolve())
         ),
         stage_files=lambda files: None,
+        symlink_probe=lambda: True,
     )
     tracked = {
         "AGENTS.md",
@@ -111,3 +113,70 @@ def test_check_reports_incompatible_schema(tmp_path: Path) -> None:
 
     assert report.state is ProjectState.INCOMPATIBLE
     assert "RULESET_SCHEMA_INCOMPATIBLE" in {issue.code for issue in report.issues}
+
+
+def test_status_preserves_incompatible_state_for_invalid_yaml(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    rules = root / ".rules"
+    rules.mkdir(parents=True)
+    (rules / "ruleset.yaml").write_text("[invalid", encoding="utf-8")
+    paths = UserPaths.from_environment({}, tmp_path / "home")
+
+    status = get_project_status(root, paths)
+
+    assert status.state is ProjectState.INCOMPATIBLE
+    assert status.profile is None
+
+
+def test_check_reports_invalid_override_frontmatter(tmp_path: Path) -> None:
+    root, paths, tracked = _healthy_project(tmp_path)
+    (root / ".rules" / "python-rules.override.md").write_text(
+        "---\npaths:\n  - '**/*.py'\n# missing terminator\n",
+        encoding="utf-8",
+    )
+
+    report = check_project(
+        root,
+        paths,
+        tracked_files=tracked,
+        link_verifier=_fake_link_verifier,
+    )
+
+    assert report.state is ProjectState.DRIFTED
+    assert "OVERRIDE_FRONTMATTER_INVALID" in {issue.code for issue in report.issues}
+
+
+def test_check_reports_drifted_managed_user_rule(tmp_path: Path) -> None:
+    root, paths, tracked = _healthy_project(tmp_path)
+    (paths.rules_home / "security-rules.md").write_text("tampered\n", encoding="utf-8")
+
+    report = check_project(
+        root,
+        paths,
+        tracked_files=tracked,
+        link_verifier=_fake_link_verifier,
+    )
+
+    assert report.state is ProjectState.DRIFTED
+    assert "MANAGED_RESOURCE_DRIFTED" in {issue.code for issue in report.issues}
+
+
+def test_check_reports_missing_task_route(tmp_path: Path) -> None:
+    root, paths, tracked = _healthy_project(tmp_path)
+    agents = root / "AGENTS.md"
+    agents.write_text(
+        agents.read_text(encoding="utf-8").replace(
+            "| Git 任务：branch、commit、merge、worktree | `.rules/git-rules.md` |",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    report = check_project(
+        root,
+        paths,
+        tracked_files=tracked,
+        link_verifier=_fake_link_verifier,
+    )
+
+    assert "AGENTS_ROUTE_MISSING" in {issue.code for issue in report.issues}

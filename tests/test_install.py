@@ -6,7 +6,11 @@ import pytest
 
 from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.errors import ProjectRulesError
-from project_execution_rules.install import install_user_resources, plan_user_install
+from project_execution_rules.install import (
+    install_user_resources,
+    plan_user_install,
+    plan_user_repair,
+)
 from project_execution_rules.paths import UserPaths
 
 
@@ -48,3 +52,25 @@ def test_install_refuses_non_managed_conflict(tmp_path: Path) -> None:
 
     with pytest.raises(ProjectRulesError, match="non-managed"):
         plan_user_install(paths, load_builtin_catalog())
+
+
+def test_repeated_install_has_empty_plan(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    catalog = load_builtin_catalog()
+    install_user_resources(plan_user_install(paths, catalog), paths, confirmed=True)
+
+    plan = plan_user_install(paths, catalog)
+
+    assert plan.changes == ()
+
+
+def test_user_repair_replaces_only_manifest_managed_drift(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    catalog = load_builtin_catalog()
+    install_user_resources(plan_user_install(paths, catalog), paths, confirmed=True)
+    drifted = paths.rules_home / "security-rules.md"
+    drifted.write_text("tampered\n", encoding="utf-8")
+
+    plan = plan_user_repair(paths, catalog)
+
+    assert drifted in {change.target for change in plan.changes}

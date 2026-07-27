@@ -144,7 +144,10 @@ class CheckReport:
 
     @property
     def ok(self) -> bool:
-        return not self.issues and self.state is ProjectState.HEALTHY
+        return (
+            not any(issue.severity == "error" for issue in self.issues)
+            and self.state is ProjectState.HEALTHY
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {

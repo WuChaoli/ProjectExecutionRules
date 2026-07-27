@@ -27,6 +27,31 @@ class _Original:
     link_target: str = ""
 
 
+def resolve_target_within_root(
+    target: Path,
+    authorized_root: Path,
+    *,
+    lexical_root: Path | None = None,
+) -> Path:
+    root = authorized_root.resolve()
+    lexical = Path(os.path.abspath(lexical_root or authorized_root))
+    candidate = Path(os.path.abspath(target))
+    try:
+        try:
+            candidate.relative_to(lexical)
+        except ValueError:
+            candidate.relative_to(root)
+        canonical_parent = candidate.parent.resolve(strict=False)
+        canonical_parent.relative_to(root)
+    except ValueError as error:
+        raise TransactionError(
+            "TARGET_OUTSIDE_ROOT",
+            f"target is outside authorized root: {candidate}",
+            evidence={"target": str(candidate), "root": str(root)},
+        ) from error
+    return canonical_parent / candidate.name
+
+
 class FileTransaction:
     """Apply exact file operations with a verified restore path."""
 
@@ -38,6 +63,7 @@ class FileTransaction:
         symlink_factory: Callable[[str, Path], None] = os.symlink,
     ) -> None:
         self.state_home = state_home.resolve()
+        self.lexical_root = Path(os.path.abspath(authorized_root))
         self.authorized_root = authorized_root.resolve()
         self.transaction_id = uuid.uuid4().hex
         self.transaction_home = self.state_home / "transactions" / self.transaction_id
@@ -48,16 +74,20 @@ class FileTransaction:
         self._symlink_factory = symlink_factory
 
     def _validate_target(self, target: Path) -> Path:
-        candidate = target.absolute()
-        try:
-            candidate.relative_to(self.authorized_root)
-        except ValueError as error:
+        return resolve_target_within_root(
+            target,
+            self.authorized_root,
+            lexical_root=self.lexical_root,
+        )
+
+    def _backup_bytes(self, backup: str) -> bytes:
+        path = resolve_target_within_root(Path(backup), self.backup_home)
+        if path.is_symlink() or not path.is_file():
             raise TransactionError(
-                "TARGET_OUTSIDE_ROOT",
-                f"target is outside authorized root: {candidate}",
-                evidence={"target": str(candidate), "root": str(self.authorized_root)},
-            ) from error
-        return candidate
+                "TRANSACTION_BACKUP_INVALID",
+                f"transaction backup is not a regular file: {path}",
+            )
+        return path.read_bytes()
 
     def plan_write(self, target: Path, content: bytes) -> None:
         validated = self._validate_target(target)
@@ -84,7 +114,7 @@ class FileTransaction:
         self.backup_home.mkdir(parents=True, exist_ok=False)
         originals: list[_Original] = []
         for index, operation in enumerate(self._operations):
-            target = Path(operation.target)
+            target = self._validate_target(Path(operation.target))
             if target.is_symlink():
                 originals.append(
                     _Original(
@@ -135,8 +165,9 @@ class FileTransaction:
 
     def _apply_operations(self) -> None:
         for operation in self._operations:
-            target = Path(operation.target)
+            target = self._validate_target(Path(operation.target))
             target.parent.mkdir(parents=True, exist_ok=True)
+            target = self._validate_target(target)
             self._unlink_file(target)
             if operation.kind == "write":
                 target.write_bytes(bytes.fromhex(operation.content_hex))
@@ -150,17 +181,35 @@ class FileTransaction:
 
     def restore(self) -> None:
         for original in reversed(self._originals):
-            target = Path(original.target)
+            target = self._validate_target(Path(original.target))
             self._unlink_file(target)
             target.parent.mkdir(parents=True, exist_ok=True)
+            target = self._validate_target(target)
             if original.kind == "file":
-                target.write_bytes(Path(original.backup).read_bytes())
+                target.write_bytes(self._backup_bytes(original.backup))
             elif original.kind == "symlink":
                 self._symlink_factory(original.link_target, target)
             elif original.kind != "missing":
                 raise TransactionError(
                     "RESTORE_KIND_INVALID",
                     f"unknown restore kind: {original.kind}",
+                )
+        for original in self._originals:
+            target = self._validate_target(Path(original.target))
+            if original.kind == "file":
+                restored = (
+                    not target.is_symlink()
+                    and target.is_file()
+                    and target.read_bytes() == self._backup_bytes(original.backup)
+                )
+            elif original.kind == "symlink":
+                restored = target.is_symlink() and os.readlink(target) == original.link_target
+            else:
+                restored = not target.exists() and not target.is_symlink()
+            if not restored:
+                raise TransactionError(
+                    "RESTORE_VERIFY_FAILED",
+                    f"restored target verification failed: {target}",
                 )
         self._applied = False
 

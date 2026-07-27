@@ -27,6 +27,7 @@ def test_doctor_only_runs_non_destructive_tool_probes(tmp_path: Path) -> None:
     )
 
     assert report.ok
+    assert "CODEX_CONFIG_MISSING" in {issue.code for issue in report.issues}
     assert calls == [("git", "--version"), ("codex", "--version")]
     assert all("pytest" not in command for call in calls for command in call)
 

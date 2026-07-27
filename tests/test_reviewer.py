@@ -17,6 +17,7 @@ def test_reviewer_invokes_ephemeral_read_only_codex(tmp_path: Path) -> None:
     (root / "AGENTS.md").write_text("# Router\n", encoding="utf-8")
     (root / ".rules").mkdir()
     (root / ".rules" / "ruleset.yaml").write_text("schema_version: 1\n", encoding="utf-8")
+    (root / "business.py").write_text("SECRET = 'must-not-be-mounted'\n", encoding="utf-8")
     paths = UserPaths.from_environment(
         {"LOCALAPPDATA": str(tmp_path / "local")},
         tmp_path / "home",
@@ -29,6 +30,11 @@ def test_reviewer_invokes_ephemeral_read_only_codex(tmp_path: Path) -> None:
         output_path: Path,
     ) -> CommandResult:
         captured.append((command, prompt))
+        review_root = Path(command[command.index("--cd") + 1])
+        assert (review_root / "project" / "AGENTS.md").is_file()
+        assert (review_root / "project" / ".rules" / "ruleset.yaml").is_file()
+        assert not (review_root / "business.py").exists()
+        assert review_root != root.resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
             json.dumps({"status": "pass", "issues": []}),

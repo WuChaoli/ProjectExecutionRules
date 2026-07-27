@@ -20,7 +20,7 @@ class CommandResult:
 CommandRunner = Callable[[tuple[str, ...]], CommandResult]
 
 
-def _real_symlink_probe(paths: UserPaths) -> bool:
+def probe_symlink_capability(paths: UserPaths) -> bool:
     paths.state_home.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=paths.state_home) as raw:
         probe = Path(raw)
@@ -42,6 +42,16 @@ def run_doctor(
     symlink_probe: Callable[[], bool] | None = None,
 ) -> CheckReport:
     issues: list[CheckIssue] = []
+    codex_config = root / ".codex" / "config.toml"
+    if not codex_config.is_file():
+        issues.append(
+            CheckIssue(
+                code="CODEX_CONFIG_MISSING",
+                message="project-local .codex/config.toml is not present",
+                severity="warning",
+                remediation="Add it only if the project needs explicit Codex configuration.",
+            )
+        )
     if not (root / ".git").exists():
         issues.append(
             CheckIssue(
@@ -61,7 +71,7 @@ def run_doctor(
                     remediation=f"Install {name} and ensure it is available on PATH.",
                 )
             )
-    probe = symlink_probe or (lambda: _real_symlink_probe(paths))
+    probe = symlink_probe or (lambda: probe_symlink_capability(paths))
     if not probe():
         issues.append(
             CheckIssue(
@@ -70,7 +80,8 @@ def run_doctor(
                 remediation="Enable Windows Developer Mode or grant link privileges.",
             )
         )
+    has_errors = any(issue.severity == "error" for issue in issues)
     return CheckReport(
-        state=ProjectState.HEALTHY if not issues else ProjectState.DRIFTED,
+        state=ProjectState.DRIFTED if has_errors else ProjectState.HEALTHY,
         issues=tuple(issues),
     )

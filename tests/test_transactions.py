@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -58,3 +60,30 @@ def test_symlink_operation_uses_exact_target(tmp_path: Path) -> None:
     transaction.apply(lambda: True)
 
     assert calls == [(str(source.resolve()), link.absolute())]
+
+
+def test_transaction_rejects_parent_symlink_escape(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    junction = root / "redirect"
+    try:
+        junction.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            pytest.skip("directory symlink privilege is unavailable")
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            pytest.skip("directory junction creation is unavailable")
+    transaction = FileTransaction(tmp_path / "state", root)
+
+    with pytest.raises(TransactionError, match="outside authorized root"):
+        transaction.plan_write(junction / "escaped.txt", b"escaped")
+
+    assert not (outside / "escaped.txt").exists()

@@ -28,11 +28,14 @@ class StatusReport:
 def get_project_status(root: Path, paths: UserPaths) -> StatusReport:
     check = check_project(root, paths)
     ruleset = root / ".rules" / "ruleset.yaml"
-    raw = (
-        load_mapping(ruleset.read_text(encoding="utf-8"), name="Rule Set")
-        if ruleset.is_file()
-        else {}
-    )
+    try:
+        raw = (
+            load_mapping(ruleset.read_text(encoding="utf-8"), name="Rule Set")
+            if ruleset.is_file()
+            else {}
+        )
+    except ValueError:
+        raw = {}
     return StatusReport(
         state=check.state,
         profile=str(raw["profile"]) if "profile" in raw else None,

@@ -60,7 +60,12 @@ def _resource_changes(paths: UserPaths, catalog: RuleCatalog) -> list[Change]:
     return changes
 
 
-def plan_user_install(paths: UserPaths, catalog: RuleCatalog) -> ChangePlan:
+def _plan_user_resources(
+    paths: UserPaths,
+    catalog: RuleCatalog,
+    *,
+    allow_managed_drift: bool,
+) -> ChangePlan:
     managed = _managed_hashes(paths)
     changes: list[Change] = []
     entries: list[dict[str, str]] = []
@@ -72,7 +77,9 @@ def plan_user_install(paths: UserPaths, catalog: RuleCatalog) -> ChangePlan:
             if current_hash == desired_hash:
                 entries.append({"logical_path": logical, "kind": "file", "sha256": desired_hash})
                 continue
-            if managed.get(logical) != current_hash:
+            if managed.get(logical) != current_hash and not (
+                allow_managed_drift and logical in managed
+            ):
                 raise ProjectRulesError(
                     "NON_MANAGED_CONFLICT",
                     f"refusing to overwrite non-managed file: {change.target}",
@@ -92,14 +99,24 @@ def plan_user_install(paths: UserPaths, catalog: RuleCatalog) -> ChangePlan:
         )
         + "\n"
     ).encode()
-    changes.append(
-        Change(
-            action="write",
-            target=paths.state_home / "managed-user.json",
-            content=manifest_content,
+    manifest_path = paths.state_home / "managed-user.json"
+    if not manifest_path.is_file() or manifest_path.read_bytes() != manifest_content:
+        changes.append(
+            Change(
+                action="write",
+                target=manifest_path,
+                content=manifest_content,
+            )
         )
-    )
     return ChangePlan(scope="user", changes=tuple(changes))
+
+
+def plan_user_install(paths: UserPaths, catalog: RuleCatalog) -> ChangePlan:
+    return _plan_user_resources(paths, catalog, allow_managed_drift=False)
+
+
+def plan_user_repair(paths: UserPaths, catalog: RuleCatalog) -> ChangePlan:
+    return _plan_user_resources(paths, catalog, allow_managed_drift=True)
 
 
 def install_user_resources(

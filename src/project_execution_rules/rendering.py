@@ -3,11 +3,27 @@ from __future__ import annotations
 from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.detection import ProjectFacts
 from project_execution_rules.initialize import ProjectSelection
+from project_execution_rules.models import ActivationType, RuleDefinition
+
+
+def route_label(domain: str, definition: RuleDefinition) -> str:
+    if definition.activation is ActivationType.ALWAYS:
+        return "始终加载"
+    if definition.activation is ActivationType.PATHS:
+        return f"路径：{'、'.join(definition.paths)}"
+    if definition.activation is ActivationType.TASK:
+        return f"{domain.replace('-', ' ').title()} 任务：{'、'.join(definition.tasks)}"
+    return f"显式入口：{'、'.join(definition.commands)}"
+
+
+def route_row(domain: str, definition: RuleDefinition) -> str:
+    return f"| {route_label(domain, definition)} | `.rules/{domain}-rules.md` |"
 
 
 def render_agents(selection: ProjectSelection) -> str:
+    catalog = load_builtin_catalog()
     domains = selection.core_domains + ("python",)
-    rows = "\n".join(f"| {domain} | `.rules/{domain}-rules.md` |" for domain in domains)
+    rows = "\n".join(route_row(domain, catalog.rules[domain]) for domain in domains)
     paths = "\n".join(f"- `.rules/{domain}-rules.md`" for domain in domains)
     return f"""# Project Rules Router
 
@@ -26,7 +42,7 @@ def render_agents(selection: ProjectSelection) -> str:
 
 ## 领域路由
 
-| 领域 | Rule |
+| 触发条件 | Rule |
 |---|---|
 {rows}
 

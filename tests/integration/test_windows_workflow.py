@@ -56,6 +56,7 @@ def test_offline_rules_workflow_without_project_command_execution(tmp_path: Path
         symlink_factory=fake_symlink,
         link_verifier=fake_link_verifier,
         stage_files=lambda files: None,
+        symlink_probe=lambda: True,
     )
     tracked = {
         "AGENTS.md",

@@ -17,12 +17,18 @@ from project_execution_rules.initialize import (
     initialize_project,
     plan_project_init,
 )
-from project_execution_rules.install import install_user_resources, plan_user_install
+from project_execution_rules.install import (
+    install_user_resources,
+    plan_user_install,
+    plan_user_repair,
+)
 from project_execution_rules.lifecycle import (
     apply_lifecycle_plan,
+    plan_project_update,
     plan_repair,
     plan_uninstall,
     plan_update,
+    plan_user_uninstall,
     rollback_transaction,
 )
 from project_execution_rules.models import OutputFormat
@@ -140,10 +146,17 @@ def init_project(
             emit(plan, output_format)
             return
         confirmed = confirm_or_cancel("初始化当前项目 Rules？", yes=yes)
+        operation = initialize_project(plan, root, paths, confirmed=confirmed)
+        report = check_project(root, paths) if operation.changed else None
         emit(
-            initialize_project(plan, root, paths, confirmed=confirmed),
+            {
+                "operation": operation.to_dict(),
+                "check": report.to_dict() if report else None,
+            },
             output_format,
         )
+        if report is not None and report.issues:
+            raise typer.Exit(2)
     except ProjectRulesError as error:
         fail(error, output_format)
 
@@ -196,7 +209,7 @@ def doctor(
     try:
         report = run_doctor(root, _paths(), _runner)
         emit(report, output_format)
-        if report.issues:
+        if any(issue.severity == "error" for issue in report.issues):
             raise typer.Exit(2)
     except ProjectRulesError as error:
         fail(error, output_format)
@@ -204,6 +217,7 @@ def doctor(
 
 @app.command()
 def update(
+    root: RootOption = Path("."),
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     yes: Annotated[bool, typer.Option("--yes")] = False,
     output_format: FormatOption = OutputFormat.HUMAN,
@@ -211,15 +225,41 @@ def update(
     """更新内置用户级资源。"""
     try:
         paths = _paths()
-        plan = plan_update(paths, load_builtin_catalog())
+        catalog = load_builtin_catalog()
+        user_plan = plan_update(paths, catalog)
+        project_plan = (
+            plan_project_update(root, catalog)
+            if (root / ".rules" / "ruleset.yaml").is_file()
+            else None
+        )
         if dry_run:
-            emit(plan, output_format)
+            emit(
+                {
+                    "user": user_plan.to_dict(),
+                    "project": project_plan.to_dict() if project_plan else None,
+                },
+                output_format,
+            )
             return
-        confirmed = confirm_or_cancel("更新用户级 Rules 资源？", yes=yes)
+        user_confirmed = confirm_or_cancel("更新用户级 Rules 资源？", yes=yes)
         emit(
-            install_user_resources(plan, paths, confirmed=confirmed),
+            install_user_resources(user_plan, paths, confirmed=user_confirmed),
             output_format,
         )
+        if project_plan is not None:
+            project_confirmed = confirm_or_cancel(
+                "更新项目 Rule Set 版本？",
+                yes=yes,
+            )
+            emit(
+                apply_lifecycle_plan(
+                    project_plan,
+                    root,
+                    paths,
+                    confirmed=project_confirmed,
+                ),
+                output_format,
+            )
     except ProjectRulesError as error:
         fail(error, output_format)
 
@@ -234,17 +274,29 @@ def repair(
     """修复 Rules 托管结构，不修改业务代码。"""
     try:
         paths = _paths()
-        plan = plan_repair(root, paths)
+        user_plan = plan_user_repair(paths, load_builtin_catalog())
+        project_plan = plan_repair(root, paths)
         if dry_run:
-            emit(plan, output_format)
+            emit(
+                {
+                    "user": user_plan.to_dict(),
+                    "project": project_plan.to_dict(),
+                },
+                output_format,
+            )
             return
-        confirmed = confirm_or_cancel("应用 Rules 结构修复？", yes=yes)
+        user_confirmed = confirm_or_cancel("修复用户级 Rules 资源？", yes=yes)
+        emit(
+            install_user_resources(user_plan, paths, confirmed=user_confirmed),
+            output_format,
+        )
+        project_confirmed = confirm_or_cancel("修复项目 Rules 结构？", yes=yes)
         emit(
             apply_lifecycle_plan(
-                plan,
+                project_plan,
                 root,
                 paths,
-                confirmed=confirmed,
+                confirmed=project_confirmed,
             ),
             output_format,
         )
@@ -276,19 +328,37 @@ def uninstall(
     """移除托管 Rules 资源并保留 Override。"""
     try:
         paths = _paths()
-        plan = plan_uninstall(root, paths, include_user=include_user)
+        project_plan = plan_uninstall(root, paths, include_user=False)
+        user_plan = plan_user_uninstall(paths) if include_user else None
         if dry_run:
-            emit(plan, output_format)
+            emit(
+                {
+                    "project": project_plan.to_dict(),
+                    "user": user_plan.to_dict() if user_plan else None,
+                },
+                output_format,
+            )
             return
-        confirmed = confirm_or_cancel("移除托管 Rules 资源？", yes=yes)
+        project_confirmed = confirm_or_cancel("移除项目 Rules 资源？", yes=yes)
         emit(
             apply_lifecycle_plan(
-                plan,
+                project_plan,
                 root,
                 paths,
-                confirmed=confirmed,
+                confirmed=project_confirmed,
             ),
             output_format,
         )
+        if user_plan is not None:
+            user_confirmed = confirm_or_cancel("移除用户级 Rules 资源？", yes=yes)
+            emit(
+                apply_lifecycle_plan(
+                    user_plan,
+                    paths.home,
+                    paths,
+                    confirmed=user_confirmed,
+                ),
+                output_format,
+            )
     except ProjectRulesError as error:
         fail(error, output_format)

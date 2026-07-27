@@ -48,5 +48,8 @@ def as_object_tuple(value: object, *, name: str = "value") -> tuple[object, ...]
 
 
 def load_mapping(text: str, *, name: str = "YAML document") -> dict[str, object]:
-    loaded = cast(object, yaml.safe_load(text))
+    try:
+        loaded = cast(object, yaml.safe_load(text))
+    except yaml.YAMLError as error:
+        raise ValueError(f"{name} contains invalid YAML: {error}") from error
     return as_mapping(loaded, name=name)

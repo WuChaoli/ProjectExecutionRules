@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.detection import detect_project
+from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.initialize import (
     ProjectSelection,
     initialize_project,
@@ -83,6 +86,7 @@ def test_initialize_writes_contract_and_stages_governance_files(tmp_path: Path) 
             link.read_text(encoding="utf-8") == str(target.resolve())
         ),
         stage_files=lambda files: staged.append(tuple(files)),
+        symlink_probe=lambda: True,
     )
 
     assert report.changed
@@ -91,3 +95,29 @@ def test_initialize_writes_contract_and_stages_governance_files(tmp_path: Path) 
     assert ".rules/python-rules.md" in (root / ".gitignore").read_text(encoding="utf-8")
     assert staged
     assert root / ".rules" / "python-rules.override.md" in staged[0]
+
+
+def test_initialize_stops_before_writes_when_symlink_is_unavailable(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    paths = _installed_paths(tmp_path)
+    plan = plan_project_init(
+        root,
+        detect_project(root),
+        ProjectSelection(core_domains=("security",)),
+        paths,
+    )
+
+    with pytest.raises(ProjectRulesError, match="symbolic link"):
+        initialize_project(
+            plan,
+            root,
+            paths,
+            confirmed=True,
+            symlink_probe=lambda: False,
+            stage_files=lambda files: None,
+        )
+
+    assert not (root / ".rules").exists()
+    assert not (root / "AGENTS.md").exists()
