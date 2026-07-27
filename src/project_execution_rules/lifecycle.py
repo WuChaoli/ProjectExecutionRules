@@ -5,8 +5,7 @@ import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-
-import yaml
+from typing import cast
 
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.initialize import ProjectSelection
@@ -16,6 +15,13 @@ from project_execution_rules.models import Change, ChangePlan, OperationReport, 
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.rendering import render_agents
 from project_execution_rules.transactions import FileTransaction
+from project_execution_rules.yaml_utils import (
+    as_mapping,
+    as_object_tuple,
+    as_string,
+    as_string_tuple,
+    load_mapping,
+)
 
 
 def plan_update(paths: UserPaths, catalog: RuleCatalog) -> ChangePlan:
@@ -29,27 +35,30 @@ def _load_ruleset(root: Path) -> dict[str, object]:
             "RULESET_MISSING",
             "project Rule Set does not exist",
         )
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ProjectRulesError("RULESET_INVALID", "project Rule Set is invalid")
-    return raw
+    try:
+        return load_mapping(path.read_text(encoding="utf-8"), name="Rule Set")
+    except ValueError as error:
+        raise ProjectRulesError("RULESET_INVALID", str(error)) from error
+
+
+def _actual_link_verifier(link: Path, target: Path) -> bool:
+    return link.is_symlink() and link.resolve() == target.resolve()
 
 
 def plan_repair(
     root: Path,
     paths: UserPaths,
     *,
-    link_verifier: Callable[[Path, Path], bool] = (
-        lambda link, target: link.is_symlink() and link.resolve() == target.resolve()
-    ),
+    link_verifier: Callable[[Path, Path], bool] = _actual_link_verifier,
 ) -> ChangePlan:
     resolved = root.resolve()
     raw = _load_ruleset(resolved)
-    domains_raw = raw.get("domains", {})
-    if not isinstance(domains_raw, dict):
-        raise ProjectRulesError("RULESET_INVALID", "Rule Set domains are invalid")
-    core = tuple(str(item) for item in domains_raw.get("core", ()))
-    profile = tuple(str(item) for item in domains_raw.get("profile", ()))
+    try:
+        domains_raw = as_mapping(raw.get("domains", {}), name="Rule Set domains")
+        core = as_string_tuple(domains_raw.get("core", ()), name="Core domains")
+        profile = as_string_tuple(domains_raw.get("profile", ()), name="Profile domains")
+    except ValueError as error:
+        raise ProjectRulesError("RULESET_INVALID", str(error)) from error
     changes: list[Change] = []
     for domain in core + profile:
         link = resolved / ".rules" / f"{domain}-rules.md"
@@ -82,10 +91,13 @@ def plan_uninstall(
 ) -> ChangePlan:
     resolved = root.resolve()
     raw = _load_ruleset(resolved)
-    domains_raw = raw.get("domains", {})
-    if not isinstance(domains_raw, dict):
-        domains_raw = {}
-    domains = tuple(domains_raw.get("core", ())) + tuple(domains_raw.get("profile", ()))
+    try:
+        domains_raw = as_mapping(raw.get("domains", {}), name="Rule Set domains")
+        domains = as_string_tuple(
+            domains_raw.get("core", ()), name="Core domains"
+        ) + as_string_tuple(domains_raw.get("profile", ()), name="Profile domains")
+    except ValueError as error:
+        raise ProjectRulesError("RULESET_INVALID", str(error)) from error
     changes = [
         Change(
             action="remove",
@@ -144,9 +156,7 @@ def apply_lifecycle_plan(
                 "CHANGE_INVALID",
                 f"unsupported lifecycle change: {change.action}",
             )
-    verifier = link_verifier or (
-        lambda link, target: link.is_symlink() and link.resolve() == target.resolve()
-    )
+    verifier = link_verifier or _actual_link_verifier
 
     def verify() -> bool:
         for change in plan.changes:
@@ -179,11 +189,15 @@ def rollback_transaction(paths: UserPaths, transaction_id: str) -> None:
             "TRANSACTION_MISSING",
             f"transaction does not exist: {transaction_id}",
         )
-    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-    authorized_root = Path(raw["authorized_root"]).resolve()
-    originals = raw.get("originals", ())
-    for original in reversed(originals):
-        target = Path(original["target"]).absolute()
+    raw = as_mapping(
+        cast(object, json.loads(manifest_path.read_text(encoding="utf-8"))),
+        name="transaction manifest",
+    )
+    authorized_root = Path(as_string(raw["authorized_root"], name="authorized_root")).resolve()
+    originals = as_object_tuple(raw.get("originals", ()), name="transaction originals")
+    for original_value in reversed(originals):
+        original = as_mapping(original_value, name="transaction original")
+        target = Path(as_string(original["target"], name="original target")).absolute()
         try:
             target.relative_to(authorized_root)
         except ValueError as error:
@@ -199,11 +213,14 @@ def rollback_transaction(paths: UserPaths, transaction_id: str) -> None:
                 f"refusing to replace non-file target: {target}",
             )
         target.parent.mkdir(parents=True, exist_ok=True)
-        kind = original["kind"]
+        kind = as_string(original["kind"], name="original kind")
         if kind == "file":
-            target.write_bytes(Path(original["backup"]).read_bytes())
+            target.write_bytes(Path(as_string(original["backup"], name="backup path")).read_bytes())
         elif kind == "symlink":
-            os.symlink(original["link_target"], target)
+            os.symlink(
+                as_string(original["link_target"], name="link target"),
+                target,
+            )
         elif kind != "missing":
             raise ProjectRulesError(
                 "TRANSACTION_KIND_INVALID",

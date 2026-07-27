@@ -124,7 +124,7 @@ class CheckIssue:
     code: str
     message: str
     severity: str = "error"
-    evidence: dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=lambda: {})
     remediation: str = ""
 
     def to_dict(self) -> dict[str, object]:

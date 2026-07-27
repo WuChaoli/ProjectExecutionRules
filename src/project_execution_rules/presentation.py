@@ -10,6 +10,7 @@ from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.models import OutputFormat
 
 console = Console()
+error_console = Console(stderr=True)
 
 
 def emit(payload: Any, output_format: OutputFormat) -> None:
@@ -24,9 +25,9 @@ def fail(error: ProjectRulesError, output_format: OutputFormat) -> None:
     if output_format is OutputFormat.JSON:
         typer.echo(json.dumps(error.to_dict(), ensure_ascii=False))
     else:
-        console.print(f"[red]{error.message}[/red]", stderr=True)
+        error_console.print(f"[red]{error.message}[/red]")
         if error.remediation:
-            console.print(error.remediation, stderr=True)
+            error_console.print(error.remediation)
     raise typer.Exit(error.exit_code)
 
 

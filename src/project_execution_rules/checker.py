@@ -5,8 +5,6 @@ import subprocess
 from collections.abc import Callable, Collection
 from pathlib import Path
 
-import yaml
-
 from project_execution_rules.catalog import (
     load_builtin_catalog,
     validate_catalog_resources,
@@ -14,6 +12,7 @@ from project_execution_rules.catalog import (
 from project_execution_rules.frontmatter import parse_frontmatter
 from project_execution_rules.models import CheckIssue, CheckReport, ProjectState
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.yaml_utils import as_mapping, as_string_tuple, load_mapping
 
 LinkVerifier = Callable[[Path, Path], bool]
 _OVERRIDE_ID = re.compile(r"`([A-Z][A-Z0-9]*-OVR-\d{3})`")
@@ -61,16 +60,14 @@ def check_project(
         )
     issues = list(validate_catalog_resources(load_builtin_catalog()))
     try:
-        raw = yaml.safe_load(ruleset_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as error:
+        raw = load_mapping(
+            ruleset_path.read_text(encoding="utf-8"),
+            name="Rule Set",
+        )
+    except (OSError, ValueError) as error:
         return CheckReport(
             state=ProjectState.INCOMPATIBLE,
             issues=(_issue("RULESET_INVALID", str(error)),),
-        )
-    if not isinstance(raw, dict):
-        return CheckReport(
-            state=ProjectState.INCOMPATIBLE,
-            issues=(_issue("RULESET_INVALID", "Rule Set must be a mapping"),),
         )
     if raw.get("schema_version") != 1:
         return CheckReport(
@@ -84,10 +81,17 @@ def check_project(
             ),
         )
     catalog = load_builtin_catalog()
-    domains_raw = raw.get("domains", {})
-    if not isinstance(domains_raw, dict):
-        domains_raw = {}
-    domains = tuple(domains_raw.get("core", ())) + tuple(domains_raw.get("profile", ()))
+    try:
+        domains_raw = as_mapping(raw.get("domains", {}), name="Rule Set domains")
+        domains = as_string_tuple(
+            domains_raw.get("core", ()), name="Core domains"
+        ) + as_string_tuple(domains_raw.get("profile", ()), name="Profile domains")
+        overrides = as_string_tuple(raw.get("overrides", ()), name="Overrides")
+    except ValueError as error:
+        return CheckReport(
+            state=ProjectState.INCOMPATIBLE,
+            issues=(_issue("RULESET_INVALID", str(error)),),
+        )
     for domain in domains:
         if domain not in catalog.rules:
             issues.append(_issue("RULE_UNKNOWN", f"unknown Rule domain: {domain}"))
@@ -121,7 +125,6 @@ def check_project(
         if tracked_files is not None
         else _git_tracked_files(resolved)
     )
-    overrides = tuple(raw.get("overrides", ()))
     seen_override_ids: set[str] = set()
     for domain in overrides:
         override = resolved / ".rules" / f"{domain}-rules.override.md"
@@ -140,7 +143,9 @@ def check_project(
             issues.append(_issue("OVERRIDE_BUDGET_EXCEEDED", f"Override exceeds 4 KiB: {domain}"))
         metadata, body = parse_frontmatter(text)
         base_paths = set(catalog.rules[domain].paths)
-        override_paths = set(metadata.get("paths", ()))
+        override_paths = set(
+            as_string_tuple(metadata.get("paths", ()), name=f"{domain} Override paths")
+        )
         if override_paths and not override_paths <= base_paths:
             issues.append(
                 _issue(

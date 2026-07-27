@@ -3,11 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
-
 from project_execution_rules.checker import check_project
 from project_execution_rules.models import ProjectState
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.yaml_utils import load_mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,9 +28,11 @@ class StatusReport:
 def get_project_status(root: Path, paths: UserPaths) -> StatusReport:
     check = check_project(root, paths)
     ruleset = root / ".rules" / "ruleset.yaml"
-    raw = yaml.safe_load(ruleset.read_text(encoding="utf-8")) if ruleset.is_file() else {}
-    if not isinstance(raw, dict):
-        raw = {}
+    raw = (
+        load_mapping(ruleset.read_text(encoding="utf-8"), name="Rule Set")
+        if ruleset.is_file()
+        else {}
+    )
     return StatusReport(
         state=check.state,
         profile=str(raw["profile"]) if "profile" in raw else None,

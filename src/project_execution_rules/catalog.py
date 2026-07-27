@@ -5,14 +5,19 @@ from importlib.resources import files
 from importlib.resources.abc import Traversable
 from typing import Any
 
-import yaml
-
 from project_execution_rules.frontmatter import parse_frontmatter
 from project_execution_rules.models import (
     ActivationType,
     CheckIssue,
     RuleCatalog,
     RuleDefinition,
+)
+from project_execution_rules.yaml_utils import (
+    as_int,
+    as_mapping,
+    as_string,
+    as_string_tuple,
+    load_mapping,
 )
 
 _RULE_ID = re.compile(r"`([A-Z][A-Z0-9]*(?:-OVR)?-\d{3})`")
@@ -38,40 +43,33 @@ def resource_root() -> Traversable:
     return files("project_execution_rules").joinpath("resources")
 
 
-def _as_tuple(value: object) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError("catalog sequence fields must contain strings")
-    return tuple(value)
-
-
 def load_builtin_catalog() -> RuleCatalog:
-    raw = yaml.safe_load(resource_root().joinpath("catalog.yaml").read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError("catalog must be a mapping")
-    raw_rules = raw.get("rules")
-    raw_profiles = raw.get("profiles")
-    if not isinstance(raw_rules, dict) or not isinstance(raw_profiles, dict):
-        raise ValueError("catalog requires rules and profiles mappings")
+    raw = load_mapping(
+        resource_root().joinpath("catalog.yaml").read_text(encoding="utf-8"),
+        name="Catalog",
+    )
+    raw_rules = as_mapping(raw.get("rules"), name="Catalog rules")
+    raw_profiles = as_mapping(raw.get("profiles"), name="Catalog profiles")
     rules: dict[str, RuleDefinition] = {}
     for domain, value in raw_rules.items():
-        if not isinstance(domain, str) or not isinstance(value, dict):
-            raise ValueError("catalog rule entries are invalid")
+        rule = as_mapping(value, name=f"Catalog rule {domain}")
         rules[domain] = RuleDefinition(
             domain=domain,
-            file=str(value["file"]),
-            activation=ActivationType(str(value["activation"])),
-            paths=_as_tuple(value.get("paths")),
-            tasks=_as_tuple(value.get("tasks")),
-            commands=_as_tuple(value.get("commands")),
-            core=bool(value.get("core", True)),
-            required=bool(value.get("required", False)),
+            file=as_string(rule["file"], name=f"{domain} file"),
+            activation=ActivationType(as_string(rule["activation"], name=f"{domain} activation")),
+            paths=as_string_tuple(rule.get("paths", ()), name=f"{domain} paths"),
+            tasks=as_string_tuple(rule.get("tasks", ()), name=f"{domain} tasks"),
+            commands=as_string_tuple(rule.get("commands", ()), name=f"{domain} commands"),
+            core=bool(rule.get("core", True)),
+            required=bool(rule.get("required", False)),
         )
-    profiles = {name: _as_tuple(domains) for name, domains in raw_profiles.items()}
+    profiles = {
+        name: as_string_tuple(domains, name=f"Profile {name}")
+        for name, domains in raw_profiles.items()
+    }
     return RuleCatalog(
-        schema_version=int(raw["schema_version"]),
-        rules_version=str(raw["rules_version"]),
+        schema_version=as_int(raw["schema_version"], name="schema_version"),
+        rules_version=as_string(raw["rules_version"], name="rules_version"),
         rules=rules,
         profiles=profiles,
     )
@@ -104,7 +102,9 @@ def validate_catalog_resources(catalog: RuleCatalog) -> tuple[CheckIssue, ...]:
         except ValueError as error:
             issues.append(_issue("RULE_FRONTMATTER_INVALID", str(error), domain=domain))
             continue
-        frontmatter_paths = tuple(metadata.get("paths", ()))
+        frontmatter_paths = as_string_tuple(
+            metadata.get("paths", ()), name=f"{domain} frontmatter paths"
+        )
         if frontmatter_paths != definition.paths:
             issues.append(
                 _issue(

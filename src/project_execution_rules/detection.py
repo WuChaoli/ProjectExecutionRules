@@ -3,6 +3,9 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
+
+from project_execution_rules.yaml_utils import as_mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,18 +26,18 @@ def detect_project(root: Path) -> ProjectFacts:
     pyproject = resolved / "pyproject.toml"
     metadata: dict[str, object] = {}
     if pyproject.is_file():
-        metadata = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    project = metadata.get("project", {})
-    if not isinstance(project, dict):
-        project = {}
+        metadata = as_mapping(
+            cast(object, tomllib.loads(pyproject.read_text(encoding="utf-8"))),
+            name="pyproject.toml",
+        )
+    project = as_mapping(metadata.get("project", {}), name="project")
+    tool = as_mapping(metadata.get("tool", {}), name="tool")
     lock_files = tuple(
         name for name in ("uv.lock", "poetry.lock", "Pipfile.lock") if (resolved / name).is_file()
     )
     if "uv.lock" in lock_files:
         manager = "uv"
-    elif "poetry.lock" in lock_files or (
-        isinstance(metadata.get("tool"), dict) and isinstance(metadata["tool"].get("poetry"), dict)  # type: ignore[union-attr]
-    ):
+    elif "poetry.lock" in lock_files or isinstance(tool.get("poetry"), dict):
         manager = "poetry"
     elif "Pipfile.lock" in lock_files:
         manager = "pipenv"

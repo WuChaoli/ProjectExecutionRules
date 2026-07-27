@@ -131,6 +131,10 @@ def _default_stage(root: Path, files: tuple[Path, ...]) -> None:
         )
 
 
+def _actual_link_verifier(link: Path, target: Path) -> bool:
+    return link.is_symlink() and link.resolve() == target.resolve()
+
+
 def initialize_project(
     plan: ChangePlan,
     root: Path,
@@ -143,9 +147,7 @@ def initialize_project(
 ) -> OperationReport:
     if not confirmed:
         return OperationReport(changed=False, transaction_id=None, changes=())
-    verifier = link_verifier or (
-        lambda link, target: link.is_symlink() and link.resolve() == target.resolve()
-    )
+    verifier = link_verifier or _actual_link_verifier
     transaction = FileTransaction(
         paths.state_home,
         root,
@@ -183,7 +185,10 @@ def initialize_project(
             or change.target.name.endswith(".override.md")
         )
     )
-    (stage_files or (lambda files: _default_stage(root, files)))(staged)
+    if stage_files is None:
+        _default_stage(root, staged)
+    else:
+        stage_files(staged)
     transaction_id = transaction.transaction_id
     transaction.cleanup()
     return OperationReport(

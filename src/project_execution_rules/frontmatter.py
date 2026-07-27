@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
-
-import yaml
+from project_execution_rules.yaml_utils import load_mapping
 
 
-def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+def parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
     """Parse optional YAML frontmatter without interpreting the Markdown body."""
     if not text.startswith("---\n"):
         return {}, text.lstrip()
@@ -13,7 +11,4 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     if end < 0:
         raise ValueError("frontmatter is not terminated")
     raw = text[4:end]
-    loaded = yaml.safe_load(raw) or {}
-    if not isinstance(loaded, dict):
-        raise ValueError("frontmatter must be a mapping")
-    return dict(loaded), text[end + 5 :].lstrip()
+    return load_mapping(raw or "{}", name="frontmatter"), text[end + 5 :].lstrip()
