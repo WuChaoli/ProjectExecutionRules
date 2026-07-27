@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import re
+import subprocess
+from collections.abc import Callable, Collection
+from pathlib import Path
+
+import yaml
+
+from project_execution_rules.catalog import (
+    load_builtin_catalog,
+    validate_catalog_resources,
+)
+from project_execution_rules.frontmatter import parse_frontmatter
+from project_execution_rules.models import CheckIssue, CheckReport, ProjectState
+from project_execution_rules.paths import UserPaths
+
+LinkVerifier = Callable[[Path, Path], bool]
+_OVERRIDE_ID = re.compile(r"`([A-Z][A-Z0-9]*-OVR-\d{3})`")
+
+
+def _actual_link_verifier(link: Path, target: Path) -> bool:
+    return link.is_symlink() and link.resolve() == target.resolve()
+
+
+def _git_tracked_files(root: Path) -> set[str]:
+    result = subprocess.run(
+        ["git", "ls-files"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return set()
+    return {line.replace("\\", "/") for line in result.stdout.splitlines()}
+
+
+def _issue(code: str, message: str, **evidence: object) -> CheckIssue:
+    return CheckIssue(code=code, message=message, evidence=dict(evidence))
+
+
+def check_project(
+    root: Path,
+    paths: UserPaths,
+    *,
+    tracked_files: Collection[str] | None = None,
+    link_verifier: LinkVerifier = _actual_link_verifier,
+) -> CheckReport:
+    resolved = root.resolve()
+    ruleset_path = resolved / ".rules" / "ruleset.yaml"
+    if not ruleset_path.is_file():
+        return CheckReport(
+            state=ProjectState.UNMANAGED,
+            issues=(
+                _issue(
+                    "RULESET_MISSING",
+                    "project is not managed because .rules/ruleset.yaml is missing",
+                ),
+            ),
+        )
+    issues = list(validate_catalog_resources(load_builtin_catalog()))
+    try:
+        raw = yaml.safe_load(ruleset_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as error:
+        return CheckReport(
+            state=ProjectState.INCOMPATIBLE,
+            issues=(_issue("RULESET_INVALID", str(error)),),
+        )
+    if not isinstance(raw, dict):
+        return CheckReport(
+            state=ProjectState.INCOMPATIBLE,
+            issues=(_issue("RULESET_INVALID", "Rule Set must be a mapping"),),
+        )
+    if raw.get("schema_version") != 1:
+        return CheckReport(
+            state=ProjectState.INCOMPATIBLE,
+            issues=(
+                _issue(
+                    "RULESET_SCHEMA_INCOMPATIBLE",
+                    "Rule Set schema is not supported",
+                    schema=raw.get("schema_version"),
+                ),
+            ),
+        )
+    catalog = load_builtin_catalog()
+    domains_raw = raw.get("domains", {})
+    if not isinstance(domains_raw, dict):
+        domains_raw = {}
+    domains = tuple(domains_raw.get("core", ())) + tuple(domains_raw.get("profile", ()))
+    for domain in domains:
+        if domain not in catalog.rules:
+            issues.append(_issue("RULE_UNKNOWN", f"unknown Rule domain: {domain}"))
+            continue
+        link = resolved / ".rules" / f"{domain}-rules.md"
+        target = paths.rules_home / f"{domain}-rules.md"
+        if not link_verifier(link, target):
+            issues.append(
+                _issue(
+                    "BASE_LINK_INVALID",
+                    f"Base Rule link is missing or targets the wrong file: {domain}",
+                    link=str(link),
+                    target=str(target),
+                )
+            )
+    agents = resolved / "AGENTS.md"
+    agents_text = agents.read_text(encoding="utf-8") if agents.is_file() else ""
+    if len(agents_text.encode("utf-8")) > 8192:
+        issues.append(_issue("AGENTS_BUDGET_EXCEEDED", "AGENTS.md exceeds 8 KiB"))
+    for domain in domains:
+        expected = f".rules/{domain}-rules.md"
+        if expected not in agents_text:
+            issues.append(
+                _issue(
+                    "AGENTS_ROUTE_MISSING",
+                    f"AGENTS.md does not route {domain}",
+                )
+            )
+    tracked = (
+        {item.replace("\\", "/") for item in tracked_files}
+        if tracked_files is not None
+        else _git_tracked_files(resolved)
+    )
+    overrides = tuple(raw.get("overrides", ()))
+    seen_override_ids: set[str] = set()
+    for domain in overrides:
+        override = resolved / ".rules" / f"{domain}-rules.override.md"
+        relative = override.relative_to(resolved).as_posix()
+        if not override.is_file():
+            issues.append(_issue("OVERRIDE_MISSING", f"declared Override is missing: {domain}"))
+            continue
+        if override.is_symlink():
+            issues.append(
+                _issue("OVERRIDE_NOT_REGULAR", f"Override must be a regular file: {domain}")
+            )
+        if relative not in tracked:
+            issues.append(_issue("OVERRIDE_UNTRACKED", f"Override is not tracked by Git: {domain}"))
+        text = override.read_text(encoding="utf-8")
+        if len(text.encode("utf-8")) > 4096:
+            issues.append(_issue("OVERRIDE_BUDGET_EXCEEDED", f"Override exceeds 4 KiB: {domain}"))
+        metadata, body = parse_frontmatter(text)
+        base_paths = set(catalog.rules[domain].paths)
+        override_paths = set(metadata.get("paths", ()))
+        if override_paths and not override_paths <= base_paths:
+            issues.append(
+                _issue(
+                    "OVERRIDE_TRIGGER_EXPANDED",
+                    f"Override expands the Base trigger: {domain}",
+                )
+            )
+        for rule_id in _OVERRIDE_ID.findall(body):
+            if rule_id in seen_override_ids:
+                issues.append(
+                    _issue("RULE_ID_DUPLICATE", f"Override Rule ID is duplicated: {rule_id}")
+                )
+            seen_override_ids.add(rule_id)
+    version_state = (
+        ProjectState.UPDATE_AVAILABLE
+        if str(raw.get("rules_version")) != catalog.rules_version
+        else ProjectState.HEALTHY
+    )
+    return CheckReport(
+        state=ProjectState.DRIFTED if issues else version_state,
+        issues=tuple(issues),
+    )

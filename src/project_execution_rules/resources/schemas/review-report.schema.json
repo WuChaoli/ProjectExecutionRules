@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["status", "issues"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["pass", "partial", "fail"]
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "message", "evidence", "recommendation"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^RULE-[0-9]{3}$"},
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "message": {"type": "string"},
+          "evidence": {"type": "array", "items": {"type": "string"}},
+          "recommendation": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
