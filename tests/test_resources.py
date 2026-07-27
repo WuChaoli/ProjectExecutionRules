@@ -49,7 +49,16 @@ def test_task_and_explicit_rules_describe_dependencies() -> None:
                 assert agent_id in body, (domain, agent_id)
 
 
-def test_canonical_resources_exist_at_declared_paths() -> None:
+def test_pull_request_rule_preserves_pr_002_clause() -> None:
+    catalog = load_builtin_catalog()
+    text = resource_root().joinpath("rules", catalog.rules["pull-request"].file).read_text(
+        encoding="utf-8"
+    )
+
+    assert "- `PR-002`：PR 描述必须说明范围、验证证据、风险和未确认边界。" in text
+
+
+
     catalog = load_builtin_catalog()
 
     for definition in catalog.skills.values():
