@@ -91,3 +91,40 @@ def test_init_json_returns_stable_error_for_non_git_project(tmp_path: Path) -> N
     assert result.exit_code != 0
     payload = json.loads(result.stdout)
     assert payload["code"] == "GIT_REPOSITORY_MISSING"
+
+
+def test_init_dry_run_reports_selected_triggers(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    environment = {
+        "USERPROFILE": str(tmp_path / "home"),
+        "LOCALAPPDATA": str(tmp_path / "local"),
+    }
+    installed = runner.invoke(
+        app,
+        ["install", "--yes", "--format", "json"],
+        env=environment,
+    )
+    assert installed.exit_code == 0
+
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "--root",
+            str(root),
+            "--core",
+            "security,git",
+            "--dry-run",
+            "--format",
+            "json",
+        ],
+        env=environment,
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    routes = {item["domain"]: item for item in payload["selection"]["rules"]}
+    assert routes["security"]["activation"] == "always"
+    assert routes["git"]["tasks"] == ["branch", "commit", "merge", "worktree"]

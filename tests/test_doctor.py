@@ -48,3 +48,23 @@ def test_doctor_reports_missing_codex_and_symlink_capability(tmp_path: Path) -> 
 
     codes = {issue.code for issue in report.issues}
     assert {"GIT_REPOSITORY_MISSING", "CODEX_UNAVAILABLE", "SYMLINK_UNAVAILABLE"} <= codes
+
+
+def test_doctor_reports_incomplete_transactions(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    paths = UserPaths.from_environment(
+        {"LOCALAPPDATA": str(tmp_path / "local")},
+        tmp_path / "home",
+    )
+    (paths.transactions_home / "deadbeef").mkdir(parents=True)
+
+    report = run_doctor(
+        root,
+        paths,
+        lambda command: CommandResult(0, "ok", ""),
+        symlink_probe=lambda: True,
+    )
+
+    assert "TRANSACTION_INCOMPLETE" in {issue.code for issue in report.issues}
+    assert not report.ok

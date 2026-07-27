@@ -57,6 +57,14 @@ def _resource_changes(paths: UserPaths, catalog: RuleCatalog) -> list[Change]:
             ),
         ]
     )
+    for skill_name in ("agent-governance", "tool-governance"):
+        changes.append(
+            Change(
+                action="write",
+                target=paths.codex_skills / skill_name / "SKILL.md",
+                content=root.joinpath(f"adapters/codex/skills/{skill_name}/SKILL.md").read_bytes(),
+            )
+        )
     return changes
 
 

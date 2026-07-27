@@ -5,6 +5,12 @@ from project_execution_rules.detection import ProjectFacts
 from project_execution_rules.initialize import ProjectSelection
 from project_execution_rules.models import ActivationType, RuleDefinition
 
+_EXPLICIT_ENTRIES = {
+    "agent-governance": "Codex Skill `$agent-governance`",
+    "tool-governance": "Codex Skill `$tool-governance`",
+    "rules-review": "Codex Agent/Skill `rules-reviewer`，CLI `project-rules review`",
+}
+
 
 def route_label(domain: str, definition: RuleDefinition) -> str:
     if definition.activation is ActivationType.ALWAYS:
@@ -13,7 +19,10 @@ def route_label(domain: str, definition: RuleDefinition) -> str:
         return f"路径：{'、'.join(definition.paths)}"
     if definition.activation is ActivationType.TASK:
         return f"{domain.replace('-', ' ').title()} 任务：{'、'.join(definition.tasks)}"
-    return f"显式入口：{'、'.join(definition.commands)}"
+    entries = "；".join(
+        f"`{command}` -> {_EXPLICIT_ENTRIES[command]}" for command in definition.commands
+    )
+    return f"显式入口：{entries}"
 
 
 def route_row(domain: str, definition: RuleDefinition) -> str:

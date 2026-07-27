@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -39,6 +40,21 @@ def test_successful_transaction_can_be_cleaned_up(tmp_path: Path) -> None:
 
     assert target.read_text(encoding="utf-8") == "schema_version: 1\n"
     assert not transaction.transaction_home.exists()
+
+
+def test_transaction_manifest_uses_relative_logical_targets(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    target = root / ".rules" / "ruleset.yaml"
+    transaction = FileTransaction(tmp_path / "state", root)
+    transaction.plan_write(target, b"schema_version: 1\n")
+
+    transaction.apply(lambda: target.is_file())
+    manifest = json.loads(
+        (transaction.transaction_home / "manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["operations"][0]["target"] == ".rules/ruleset.yaml"
+    assert manifest["originals"][0]["target"] == ".rules/ruleset.yaml"
 
 
 def test_symlink_operation_uses_exact_target(tmp_path: Path) -> None:

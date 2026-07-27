@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import os
+import platform
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from project_execution_rules.managed import ManagedManifest, sha256_bytes
 from project_execution_rules.models import CheckIssue, CheckReport, ProjectState
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.yaml_utils import load_mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +45,21 @@ def run_doctor(
     symlink_probe: Callable[[], bool] | None = None,
 ) -> CheckReport:
     issues: list[CheckIssue] = []
+    if platform.system() != "Windows":
+        issues.append(
+            CheckIssue(
+                code="PLATFORM_UNSUPPORTED",
+                message="the first release supports Windows only",
+            )
+        )
+    python_version = tuple(int(part) for part in platform.python_version_tuple()[:2])
+    if python_version < (3, 11):
+        issues.append(
+            CheckIssue(
+                code="PYTHON_UNSUPPORTED",
+                message="Python 3.11 or newer is required",
+            )
+        )
     codex_config = root / ".codex" / "config.toml"
     if not codex_config.is_file():
         issues.append(
@@ -52,6 +70,81 @@ def run_doctor(
                 remediation="Add it only if the project needs explicit Codex configuration.",
             )
         )
+    manifest_path = paths.state_home / "managed-user.json"
+    if not manifest_path.is_file():
+        issues.append(
+            CheckIssue(
+                code="USER_INSTALL_MISSING",
+                message="user-level Rules resources are not installed",
+                severity="warning",
+                remediation="Run project-rules install before initializing a project.",
+            )
+        )
+    else:
+        try:
+            manifest = ManagedManifest.load(manifest_path)
+            for entry in manifest.entries:
+                target = paths.home / entry.logical_path
+                try:
+                    target.absolute().relative_to(paths.home.resolve())
+                    target.parent.resolve(strict=False).relative_to(paths.home.resolve())
+                except ValueError:
+                    issues.append(
+                        CheckIssue(
+                            code="MANAGED_RESOURCE_PATH_INVALID",
+                            message=(
+                                f"managed resource path escapes the user home: {entry.logical_path}"
+                            ),
+                        )
+                    )
+                    continue
+                if (
+                    target.is_symlink()
+                    or not target.is_file()
+                    or sha256_bytes(target.read_bytes()) != entry.sha256
+                ):
+                    issues.append(
+                        CheckIssue(
+                            code="MANAGED_RESOURCE_DRIFTED",
+                            message=(
+                                "managed user resource is missing or modified: "
+                                f"{entry.logical_path}"
+                            ),
+                        )
+                    )
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            issues.append(
+                CheckIssue(
+                    code="MANAGED_MANIFEST_INVALID",
+                    message=f"user resource manifest is invalid: {error}",
+                )
+            )
+    if paths.transactions_home.is_dir() and any(paths.transactions_home.iterdir()):
+        issues.append(
+            CheckIssue(
+                code="TRANSACTION_INCOMPLETE",
+                message="one or more incomplete transactions require recovery",
+                remediation="Inspect the transaction IDs and run project-rules rollback.",
+            )
+        )
+    ruleset_path = root / ".rules" / "ruleset.yaml"
+    if ruleset_path.is_file():
+        try:
+            ruleset = load_mapping(ruleset_path.read_text(encoding="utf-8"), name="Rule Set")
+            if ruleset.get("schema_version") != 1:
+                issues.append(
+                    CheckIssue(
+                        code="RULESET_SCHEMA_INCOMPATIBLE",
+                        message="project Rule Set schema is not supported",
+                    )
+                )
+        except (OSError, ValueError) as error:
+            issues.append(
+                CheckIssue(
+                    code="RULESET_INVALID",
+                    message=f"project Rule Set is invalid: {error}",
+                )
+            )
     if not (root / ".git").exists():
         issues.append(
             CheckIssue(

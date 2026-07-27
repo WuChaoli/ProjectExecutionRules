@@ -95,6 +95,14 @@ def review_rules(
                 paths.codex_skills / "rules-reviewer" / "SKILL.md",
                 review_root / "codex" / "skills" / "rules-reviewer" / "SKILL.md",
             ),
+            (
+                paths.codex_skills / "agent-governance" / "SKILL.md",
+                review_root / "codex" / "skills" / "agent-governance" / "SKILL.md",
+            ),
+            (
+                paths.codex_skills / "tool-governance" / "SKILL.md",
+                review_root / "codex" / "skills" / "tool-governance" / "SKILL.md",
+            ),
         ):
             if source.is_dir():
                 shutil.copytree(source, target, symlinks=False)

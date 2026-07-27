@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -9,10 +10,15 @@ from typing import cast
 
 import yaml
 
+from project_execution_rules.catalog import resource_root
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.initialize import ProjectSelection
 from project_execution_rules.install import plan_user_install
-from project_execution_rules.managed import ManagedManifest, sha256_bytes
+from project_execution_rules.managed import (
+    ManagedManifest,
+    is_current_managed_file,
+    sha256_bytes,
+)
 from project_execution_rules.models import Change, ChangePlan, OperationReport, RuleCatalog
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.rendering import render_agents
@@ -25,9 +31,114 @@ from project_execution_rules.yaml_utils import (
     load_mapping,
 )
 
+_RULE_ID = re.compile(r"`([A-Z][A-Z0-9]*(?:-OVR)?-\d{3})`")
+
 
 def plan_update(paths: UserPaths, catalog: RuleCatalog) -> ChangePlan:
     return plan_user_install(paths, catalog)
+
+
+def summarize_update(
+    root: Path,
+    paths: UserPaths,
+    catalog: RuleCatalog,
+) -> dict[str, object]:
+    resource_rules = resource_root().joinpath("rules")
+    added: list[str] = []
+    modified: list[str] = []
+    affected_files: list[str] = []
+    desired_logical: set[str] = set()
+    desired_ids: set[str] = set()
+    installed_ids: set[str] = set()
+    for domain, definition in catalog.rules.items():
+        target = paths.rules_home / f"{domain}-rules.md"
+        desired = resource_rules.joinpath(definition.file).read_bytes()
+        logical = target.relative_to(paths.home).as_posix()
+        desired_logical.add(logical)
+        desired_ids.update(_RULE_ID.findall(desired.decode("utf-8")))
+        if not target.is_file():
+            added.append(domain)
+            affected_files.append(str(target))
+            continue
+        current = target.read_bytes()
+        installed_ids.update(_RULE_ID.findall(current.decode("utf-8")))
+        if current != desired:
+            modified.append(domain)
+            affected_files.append(str(target))
+    deprecated: list[str] = []
+    manifest_path = paths.state_home / "managed-user.json"
+    from_version: str | None = None
+    if manifest_path.is_file():
+        manifest = ManagedManifest.load(manifest_path)
+        from_version = manifest.resource_version
+        for entry in manifest.entries:
+            if (
+                entry.logical_path.startswith(".agents/rules/")
+                and entry.logical_path.endswith("-rules.md")
+                and entry.logical_path not in desired_logical
+            ):
+                deprecated.append(Path(entry.logical_path).stem.removesuffix("-rules"))
+                affected_files.append(str(paths.home / entry.logical_path))
+    trigger_changes: list[str] = []
+    installed_catalog = paths.rules_home / "catalog.yaml"
+    if installed_catalog.is_file():
+        try:
+            raw_catalog = load_mapping(
+                installed_catalog.read_text(encoding="utf-8"),
+                name="installed Catalog",
+            )
+            raw_rules = as_mapping(raw_catalog.get("rules", {}), name="installed rules")
+            for domain, definition in catalog.rules.items():
+                raw_rule = as_mapping(raw_rules.get(domain, {}), name=f"installed {domain}")
+                installed_trigger = (
+                    as_string(raw_rule.get("activation"), name=f"{domain} activation"),
+                    as_string_tuple(raw_rule.get("paths", ()), name=f"{domain} paths"),
+                    as_string_tuple(raw_rule.get("tasks", ()), name=f"{domain} tasks"),
+                    as_string_tuple(raw_rule.get("commands", ()), name=f"{domain} commands"),
+                )
+                desired_trigger = (
+                    definition.activation.value,
+                    definition.paths,
+                    definition.tasks,
+                    definition.commands,
+                )
+                if installed_trigger != desired_trigger:
+                    trigger_changes.append(domain)
+        except (OSError, ValueError):
+            trigger_changes = list(catalog.rules)
+    changed_domains = set(added + modified + deprecated + trigger_changes)
+    overrides = sorted(
+        path.name.removesuffix("-rules.override.md")
+        for path in (root.resolve() / ".rules").glob("*-rules.override.md")
+        if path.name.removesuffix("-rules.override.md") in changed_domains
+    )
+    schema_compatible = True
+    ruleset_path = root.resolve() / ".rules" / "ruleset.yaml"
+    if ruleset_path.is_file():
+        try:
+            ruleset = load_mapping(ruleset_path.read_text(encoding="utf-8"), name="Rule Set")
+            schema_compatible = ruleset.get("schema_version") == catalog.schema_version
+        except (OSError, ValueError):
+            schema_compatible = False
+    return {
+        "rules_version": {
+            "from": from_version,
+            "to": catalog.rules_version,
+        },
+        "rules": {
+            "added": sorted(added),
+            "modified": sorted(modified),
+            "deprecated": sorted(deprecated),
+        },
+        "rule_ids": {
+            "added": sorted(desired_ids - installed_ids),
+            "deprecated": sorted(installed_ids - desired_ids),
+        },
+        "trigger_changes": sorted(trigger_changes),
+        "override_impact": overrides,
+        "affected_files": sorted(set(affected_files)),
+        "schema_compatible": schema_compatible,
+    }
 
 
 def plan_project_update(root: Path, catalog: RuleCatalog) -> ChangePlan:
@@ -181,6 +292,20 @@ def apply_lifecycle_plan(
         return OperationReport(changed=False, transaction_id=None, changes=())
     if plan.scope == "project":
         authorized_root = root.resolve()
+        for change in plan.changes:
+            if change.action == "symlink" and (
+                change.link_target is None
+                or not is_current_managed_file(
+                    change.link_target,
+                    paths_home=paths.home,
+                    manifest_path=paths.state_home / "managed-user.json",
+                )
+            ):
+                raise ProjectRulesError(
+                    "USER_RULE_MISSING",
+                    f"cannot create a project link to a missing or drifted user Rule: "
+                    f"{change.link_target}",
+                )
     else:
         authorized_root = Path(os.path.commonpath([root, paths.home, paths.state_home]))
     transaction = FileTransaction(
@@ -249,8 +374,14 @@ def rollback_transaction(paths: UserPaths, transaction_id: str) -> None:
     for original_value in reversed(originals):
         original = as_mapping(original_value, name="transaction original")
         try:
+            logical_target = Path(as_string(original["target"], name="original target"))
+            if logical_target.is_absolute() or ".." in logical_target.parts:
+                raise ProjectRulesError(
+                    "TRANSACTION_TARGET_INVALID",
+                    f"transaction target is not relative: {logical_target}",
+                )
             target = resolve_target_within_root(
-                Path(as_string(original["target"], name="original target")),
+                authorized_root / logical_target,
                 authorized_root,
             )
         except ProjectRulesError as error:
@@ -294,6 +425,39 @@ def rollback_transaction(paths: UserPaths, transaction_id: str) -> None:
             raise ProjectRulesError(
                 "TRANSACTION_KIND_INVALID",
                 f"unknown transaction original kind: {kind}",
+            )
+    for original_value in originals:
+        original = as_mapping(original_value, name="transaction original")
+        logical_target = Path(as_string(original["target"], name="original target"))
+        target = resolve_target_within_root(
+            authorized_root / logical_target,
+            authorized_root,
+        )
+        kind = as_string(original["kind"], name="original kind")
+        if kind == "file":
+            backup = resolve_target_within_root(
+                Path(as_string(original["backup"], name="backup path")),
+                paths.backups_home / transaction_id,
+            )
+            restored = (
+                not target.is_symlink()
+                and target.is_file()
+                and not backup.is_symlink()
+                and backup.is_file()
+                and target.read_bytes() == backup.read_bytes()
+            )
+        elif kind == "symlink":
+            restored = target.is_symlink() and os.readlink(target) == as_string(
+                original["link_target"],
+                name="link target",
+            )
+        else:
+            restored = not target.exists() and not target.is_symlink()
+        if not restored:
+            raise ProjectRulesError(
+                "ROLLBACK_VERIFY_FAILED",
+                f"rollback verification failed: {target}",
+                remediation="Transaction evidence and backups were preserved.",
             )
     backup_home = paths.backups_home / transaction_id
     for path in (transaction_home, backup_home):

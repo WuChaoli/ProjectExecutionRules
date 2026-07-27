@@ -13,6 +13,7 @@ from project_execution_rules.initialize import (
 from project_execution_rules.install import install_user_resources, plan_user_install
 from project_execution_rules.models import ProjectState
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.rendering import render_agents
 from project_execution_rules.status import get_project_status
 
 
@@ -180,3 +181,12 @@ def test_check_reports_missing_task_route(tmp_path: Path) -> None:
     )
 
     assert "AGENTS_ROUTE_MISSING" in {issue.code for issue in report.issues}
+
+
+def test_agents_routes_explicit_commands_to_real_codex_entries() -> None:
+    agents = render_agents(ProjectSelection(core_domains=("security", "agent", "tool", "harness")))
+
+    assert "`agent-governance` -> Codex Skill `$agent-governance`" in agents
+    assert (
+        "`rules-review` -> Codex Agent/Skill `rules-reviewer`，CLI `project-rules review`"
+    ) in agents

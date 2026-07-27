@@ -30,8 +30,9 @@ from project_execution_rules.lifecycle import (
     plan_update,
     plan_user_uninstall,
     rollback_transaction,
+    summarize_update,
 )
-from project_execution_rules.models import OutputFormat
+from project_execution_rules.models import OutputFormat, RuleCatalog
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.presentation import confirm_or_cancel, emit, fail
 from project_execution_rules.reviewer import review_rules
@@ -68,6 +69,56 @@ def _runner(command: tuple[str, ...]) -> CommandResult:
     return CommandResult(result.returncode, result.stdout, result.stderr)
 
 
+def _select_core_domains(
+    catalog: RuleCatalog,
+    requested: str | None,
+    *,
+    interactive: bool,
+) -> tuple[str, ...]:
+    available = tuple(domain for domain, rule in catalog.rules.items() if rule.core)
+    raw = requested
+    if raw is None and interactive:
+        typer.echo(f"可用 Core Rules：{', '.join(available)}")
+        raw = typer.prompt("选择 Core Rules（逗号分隔）", default="all")
+    if raw is None or raw.strip().lower() == "all":
+        return available
+    selected = tuple(dict.fromkeys(item.strip() for item in raw.split(",") if item.strip()))
+    unknown = tuple(domain for domain in selected if domain not in available)
+    if unknown:
+        raise ProjectRulesError(
+            "RULE_SELECTION_INVALID",
+            f"unknown Core Rule selection: {', '.join(unknown)}",
+        )
+    required = tuple(
+        domain for domain in available if catalog.rules[domain].required and domain not in selected
+    )
+    if required:
+        raise ProjectRulesError(
+            "REQUIRED_RULE_MISSING",
+            f"required Core Rules cannot be omitted: {', '.join(required)}",
+        )
+    return selected
+
+
+def _selection_summary(
+    catalog: RuleCatalog,
+    domains: tuple[str, ...],
+) -> dict[str, object]:
+    return {
+        "profile": "python",
+        "rules": [
+            {
+                "domain": domain,
+                "activation": catalog.rules[domain].activation.value,
+                "paths": list(catalog.rules[domain].paths),
+                "tasks": list(catalog.rules[domain].tasks),
+                "commands": list(catalog.rules[domain].commands),
+            }
+            for domain in domains + catalog.profiles["python"]
+        ],
+    }
+
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
     """打开交互菜单或执行指定子命令。"""
@@ -96,7 +147,11 @@ def main(ctx: typer.Context) -> None:
     command = commands.get(choice)
     if command is None:
         raise typer.BadParameter(f"未知操作：{choice}")
-    ctx.invoke(command)
+    if choice in {"init", "status", "check", "review", "doctor", "update", "repair", "uninstall"}:
+        root = Path(typer.prompt("选择项目目录", default="."))
+        ctx.invoke(command, root=root)
+    else:
+        ctx.invoke(command)
 
 
 @app.command()
@@ -124,6 +179,10 @@ def install(
 @app.command("init")
 def init_project(
     root: RootOption = Path("."),
+    core: Annotated[
+        str | None,
+        typer.Option("--core", help="逗号分隔的 Core Rule 域，默认 all。"),
+    ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     yes: Annotated[bool, typer.Option("--yes")] = False,
     output_format: FormatOption = OutputFormat.HUMAN,
@@ -133,7 +192,11 @@ def init_project(
         paths = _paths()
         facts = detect_project(root)
         catalog = load_builtin_catalog()
-        core_domains = tuple(domain for domain, rule in catalog.rules.items() if rule.core)
+        core_domains = _select_core_domains(
+            catalog,
+            core,
+            interactive=not yes and not dry_run,
+        )
         has_python_difference = bool(
             facts.python_requirement or facts.package_manager != "unknown" or facts.source_dirs
         )
@@ -142,9 +205,18 @@ def init_project(
             override_domains=("python",) if has_python_difference else (),
         )
         plan = plan_project_init(root, facts, selection, paths)
+        summary = _selection_summary(catalog, core_domains)
         if dry_run:
-            emit(plan, output_format)
+            emit(
+                {
+                    "selection": summary,
+                    "plan": plan.to_dict(),
+                },
+                output_format,
+            )
             return
+        if not yes:
+            emit({"selection": summary, "plan": plan.to_dict()}, output_format)
         confirmed = confirm_or_cancel("初始化当前项目 Rules？", yes=yes)
         operation = initialize_project(plan, root, paths, confirmed=confirmed)
         report = check_project(root, paths) if operation.changed else None
@@ -232,15 +304,19 @@ def update(
             if (root / ".rules" / "ruleset.yaml").is_file()
             else None
         )
+        impact = summarize_update(root, paths, catalog)
         if dry_run:
             emit(
                 {
                     "user": user_plan.to_dict(),
                     "project": project_plan.to_dict() if project_plan else None,
+                    "impact": impact,
                 },
                 output_format,
             )
             return
+        if not yes:
+            emit({"impact": impact}, output_format)
         user_confirmed = confirm_or_cancel("更新用户级 Rules 资源？", yes=yes)
         emit(
             install_user_resources(user_plan, paths, confirmed=user_confirmed),
@@ -286,10 +362,18 @@ def repair(
             )
             return
         user_confirmed = confirm_or_cancel("修复用户级 Rules 资源？", yes=yes)
-        emit(
-            install_user_resources(user_plan, paths, confirmed=user_confirmed),
-            output_format,
+        user_report = install_user_resources(
+            user_plan,
+            paths,
+            confirmed=user_confirmed,
         )
+        emit(user_report, output_format)
+        if user_plan.changes and not user_report.changed:
+            raise ProjectRulesError(
+                "USER_REPAIR_REQUIRED",
+                "project repair requires the user-level Rules repair to complete first",
+            )
+        project_plan = plan_repair(root, paths)
         project_confirmed = confirm_or_cancel("修复项目 Rules 结构？", yes=yes)
         emit(
             apply_lifecycle_plan(

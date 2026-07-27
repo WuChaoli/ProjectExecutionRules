@@ -80,6 +80,18 @@ class FileTransaction:
             lexical_root=self.lexical_root,
         )
 
+    def _logical_target(self, target: Path) -> str:
+        return self._validate_target(target).relative_to(self.authorized_root).as_posix()
+
+    def _target_path(self, logical_target: str) -> Path:
+        logical = Path(logical_target)
+        if logical.is_absolute() or ".." in logical.parts:
+            raise TransactionError(
+                "TRANSACTION_TARGET_INVALID",
+                f"transaction target is not relative: {logical_target}",
+            )
+        return self._validate_target(self.authorized_root / logical)
+
     def _backup_bytes(self, backup: str) -> bytes:
         path = resolve_target_within_root(Path(backup), self.backup_home)
         if path.is_symlink() or not path.is_file():
@@ -90,31 +102,32 @@ class FileTransaction:
         return path.read_bytes()
 
     def plan_write(self, target: Path, content: bytes) -> None:
-        validated = self._validate_target(target)
         self._operations.append(
-            _Operation(kind="write", target=str(validated), content_hex=content.hex())
+            _Operation(
+                kind="write",
+                target=self._logical_target(target),
+                content_hex=content.hex(),
+            )
         )
 
     def plan_symlink(self, target: Path, link_target: Path) -> None:
-        validated = self._validate_target(target)
         self._operations.append(
             _Operation(
                 kind="symlink",
-                target=str(validated),
+                target=self._logical_target(target),
                 link_target=str(link_target.resolve()),
             )
         )
 
     def plan_remove(self, target: Path) -> None:
-        validated = self._validate_target(target)
-        self._operations.append(_Operation(kind="remove", target=str(validated)))
+        self._operations.append(_Operation(kind="remove", target=self._logical_target(target)))
 
     def _backup(self) -> None:
         self.transaction_home.mkdir(parents=True, exist_ok=False)
         self.backup_home.mkdir(parents=True, exist_ok=False)
         originals: list[_Original] = []
         for index, operation in enumerate(self._operations):
-            target = self._validate_target(Path(operation.target))
+            target = self._target_path(operation.target)
             if target.is_symlink():
                 originals.append(
                     _Original(
@@ -165,7 +178,7 @@ class FileTransaction:
 
     def _apply_operations(self) -> None:
         for operation in self._operations:
-            target = self._validate_target(Path(operation.target))
+            target = self._target_path(operation.target)
             target.parent.mkdir(parents=True, exist_ok=True)
             target = self._validate_target(target)
             self._unlink_file(target)
@@ -181,7 +194,7 @@ class FileTransaction:
 
     def restore(self) -> None:
         for original in reversed(self._originals):
-            target = self._validate_target(Path(original.target))
+            target = self._target_path(original.target)
             self._unlink_file(target)
             target.parent.mkdir(parents=True, exist_ok=True)
             target = self._validate_target(target)
@@ -195,7 +208,7 @@ class FileTransaction:
                     f"unknown restore kind: {original.kind}",
                 )
         for original in self._originals:
-            target = self._validate_target(Path(original.target))
+            target = self._target_path(original.target)
             if original.kind == "file":
                 restored = (
                     not target.is_symlink()

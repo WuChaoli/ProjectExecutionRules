@@ -30,6 +30,8 @@ def test_user_install_plan_contains_rules_agent_and_skill(tmp_path: Path) -> Non
     assert paths.rules_home / "security-rules.md" in targets
     assert paths.codex_agents / "rules-reviewer.toml" in targets
     assert paths.codex_skills / "rules-reviewer" / "SKILL.md" in targets
+    assert paths.codex_skills / "agent-governance" / "SKILL.md" in targets
+    assert paths.codex_skills / "tool-governance" / "SKILL.md" in targets
     assert not any(target.exists() for target in targets)
 
 
