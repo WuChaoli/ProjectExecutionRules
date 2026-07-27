@@ -13,6 +13,16 @@ class ActivationType(StrEnum):
     EXPLICIT = "explicit"
 
 
+class AdapterId(StrEnum):
+    CODEX = "codex"
+    CLAUDE = "claude"
+
+
+class SkillInvocation(StrEnum):
+    MODEL = "model"
+    USER = "user"
+
+
 class ProjectState(StrEnum):
     UNMANAGED = "unmanaged"
     PLANNED = "planned"
@@ -69,6 +79,22 @@ class OperationReport:
 
 
 @dataclass(frozen=True, slots=True)
+class SkillDefinition:
+    skill_id: str
+    file: str
+    invocation: SkillInvocation
+    adapters: tuple[AdapterId, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentDefinition:
+    agent_id: str
+    file: str
+    skills: tuple[str, ...]
+    adapters: tuple[AdapterId, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RuleDefinition:
     domain: str
     file: str
@@ -76,6 +102,8 @@ class RuleDefinition:
     paths: tuple[str, ...] = ()
     tasks: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
+    skills: tuple[str, ...] = ()
+    agents: tuple[str, ...] = ()
     core: bool = True
     required: bool = False
 
@@ -102,6 +130,8 @@ class RuleCatalog:
     rules_version: str
     rules: dict[str, RuleDefinition]
     profiles: dict[str, tuple[str, ...]]
+    skills: dict[str, SkillDefinition]
+    agents: dict[str, AgentDefinition]
 
 
 @dataclass(frozen=True, slots=True)
