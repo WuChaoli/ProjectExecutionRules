@@ -11,6 +11,8 @@ from project_execution_rules.managed import (
     ManagedEntry,
     ManagedManifest,
     ManagedSelection,
+    is_safe_adapter_file,
+    is_safe_adapter_path,
     sha256_bytes,
 )
 from project_execution_rules.models import (
@@ -114,9 +116,23 @@ def _plan_user_resources(
     changes: list[Change] = []
     entries: list[ManagedEntry] = []
     for change in _resource_changes(paths, catalog):
+        if not is_safe_adapter_path(change.target, adapter_home=paths.home):
+            raise ProjectRulesError(
+                "NON_MANAGED_CONFLICT",
+                f"refusing non-managed unsafe path: {change.target}",
+                evidence={"target": str(change.target)},
+                remediation="Remove the symlink or reparse ancestor, then retry.",
+            )
         logical = change.target.relative_to(paths.home).as_posix()
         desired_hash = sha256_bytes(change.content)
-        if change.target.is_file():
+        if change.target.exists() or change.target.is_symlink():
+            if not is_safe_adapter_file(change.target, adapter_home=paths.home):
+                raise ProjectRulesError(
+                    "NON_MANAGED_CONFLICT",
+                    f"refusing to overwrite non-managed file: {change.target}",
+                    evidence={"target": str(change.target)},
+                    remediation="Move or rename the conflicting file, then retry.",
+                )
             current_hash = sha256_bytes(change.target.read_bytes())
             if current_hash == desired_hash:
                 entries.append(

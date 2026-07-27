@@ -17,6 +17,7 @@ from project_execution_rules.install import plan_user_install
 from project_execution_rules.managed import (
     ManagedManifest,
     is_current_managed_file,
+    is_safe_adapter_file,
     sha256_bytes,
 )
 from project_execution_rules.models import (
@@ -273,17 +274,8 @@ def plan_user_uninstall(paths: UserPaths) -> ChangePlan:
     changes: list[Change] = []
     for entry in manifest.entries:
         target = paths.home / Path(entry.logical_path)
-        try:
-            target.absolute().relative_to(paths.home.resolve())
-            target.parent.resolve(strict=False).relative_to(paths.home.resolve())
-        except ValueError as error:
-            raise ProjectRulesError(
-                "MANAGED_RESOURCE_PATH_INVALID",
-                f"managed resource path escapes the user home: {entry.logical_path}",
-            ) from error
         if (
-            not target.is_symlink()
-            and target.is_file()
+            is_safe_adapter_file(target, adapter_home=paths.home)
             and sha256_bytes(target.read_bytes()) == entry.sha256
         ):
             changes.append(Change(action="remove", target=target))
@@ -324,6 +316,7 @@ def apply_lifecycle_plan(
     transaction = FileTransaction(
         paths.state_home,
         authorized_root,
+        adapter=AdapterId.CODEX if plan.scope == "user" else None,
         symlink_factory=symlink_factory,
     )
     for change in plan.changes:
@@ -363,7 +356,39 @@ def apply_lifecycle_plan(
     return OperationReport(True, transaction_id, plan.changes)
 
 
-def rollback_transaction(paths: UserPaths, transaction_id: str) -> None:
+def _validate_transaction_adapter(
+    raw: dict[str, object],
+    *,
+    expected_adapter: AdapterId | str | None,
+) -> None:
+    if expected_adapter is None:
+        return
+    expected = AdapterId(expected_adapter)
+    try:
+        actual = AdapterId(as_string(raw["adapter"], name="transaction Adapter"))
+    except (KeyError, TypeError, ValueError) as error:
+        raise ProjectRulesError(
+            "TRANSACTION_ADAPTER_INVALID",
+            "transaction Adapter metadata is missing or invalid",
+            evidence={"expected_adapter": expected.value},
+        ) from error
+    if actual is not expected:
+        raise ProjectRulesError(
+            "TRANSACTION_ADAPTER_MISMATCH",
+            f"transaction belongs to Adapter {actual.value}, not {expected.value}",
+            evidence={
+                "expected_adapter": expected.value,
+                "actual_adapter": actual.value,
+            },
+        )
+
+
+def rollback_transaction(
+    paths: UserPaths,
+    transaction_id: str,
+    *,
+    expected_adapter: AdapterId | str | None = None,
+) -> None:
     if not transaction_id or any(
         character not in "0123456789abcdef" for character in transaction_id
     ):
@@ -382,6 +407,7 @@ def rollback_transaction(paths: UserPaths, transaction_id: str) -> None:
         cast(object, json.loads(manifest_path.read_text(encoding="utf-8"))),
         name="transaction manifest",
     )
+    _validate_transaction_adapter(raw, expected_adapter=expected_adapter)
     authorized_root = Path(as_string(raw["authorized_root"], name="authorized_root")).resolve()
     originals = as_object_tuple(raw.get("originals", ()), name="transaction originals")
     for original_value in reversed(originals):

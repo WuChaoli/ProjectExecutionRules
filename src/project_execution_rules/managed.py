@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import stat
 from collections.abc import Mapping
@@ -155,6 +156,53 @@ class ManagedManifest:
             raise _invalid_manifest_error(path, str(error)) from error
 
 
+def is_safe_adapter_path(target: Path, *, adapter_home: Path) -> bool:
+    lexical_target = Path(os.path.abspath(target))
+    lexical_home = Path(os.path.abspath(adapter_home))
+    try:
+        lexical_target.relative_to(lexical_home)
+    except ValueError:
+        return False
+
+    current = lexical_target
+    while True:
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False
+        else:
+            if current.is_symlink() or (
+                getattr(metadata, "st_file_attributes", 0)
+                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            ):
+                return False
+        if current == lexical_home:
+            break
+        if current.parent == current:
+            return False
+        current = current.parent
+
+    try:
+        lexical_target.parent.resolve(strict=False).relative_to(
+            lexical_home.resolve(strict=False)
+        )
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def is_safe_adapter_file(target: Path, *, adapter_home: Path) -> bool:
+    if not is_safe_adapter_path(target, adapter_home=adapter_home):
+        return False
+    try:
+        target.resolve(strict=True).relative_to(adapter_home.resolve(strict=True))
+        return target.is_file()
+    except (OSError, ValueError):
+        return False
+
+
 def is_current_managed_file(
     target: Path,
     *,
@@ -162,11 +210,7 @@ def is_current_managed_file(
     adapter_home: Path,
     manifest_path: Path,
 ) -> bool:
-    if (
-        _has_reparse_point(target, adapter_home)
-        or not target.is_file()
-        or not manifest_path.is_file()
-    ):
+    if not is_safe_adapter_file(target, adapter_home=adapter_home) or not manifest_path.is_file():
         return False
     try:
         logical = target.resolve(strict=True).relative_to(
@@ -282,22 +326,3 @@ def _invalid_manifest_error(
         evidence=details,
         remediation="Restore the manifest from backup or reinstall managed resources.",
     )
-
-
-def _has_reparse_point(target: Path, adapter_home: Path) -> bool:
-    current = target
-    while True:
-        try:
-            metadata = current.lstat()
-        except OSError:
-            return True
-        if current.is_symlink() or (
-            getattr(metadata, "st_file_attributes", 0)
-            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-        ):
-            return True
-        if current == adapter_home:
-            return False
-        if current.parent == current:
-            return True
-        current = current.parent
