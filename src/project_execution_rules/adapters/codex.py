@@ -10,14 +10,7 @@ from project_execution_rules.catalog import load_builtin_catalog, resource_root
 from project_execution_rules.detection import ProjectFacts
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.initialize import ProjectSelection
-from project_execution_rules.managed import (
-    ManagedEntry,
-    ManagedManifest,
-    ManagedSelection,
-    is_safe_adapter_file,
-    is_safe_adapter_path,
-    sha256_bytes,
-)
+from project_execution_rules.managed import build_managed_install_plan
 from project_execution_rules.models import AdapterId, Change, ChangePlan, RuleCatalog, RuleSet
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.rulesets import render_ruleset
@@ -43,65 +36,20 @@ class CodexAdapter:
         *,
         allow_managed_drift: bool = False,
     ) -> ChangePlan:
-        managed = self._managed_hashes(paths)
-        changes: list[Change] = []
-        entries: list[ManagedEntry] = []
-        for change in self._resource_changes(paths, catalog, selection):
-            if not is_safe_adapter_path(change.target, adapter_home=paths.home):
-                raise ProjectRulesError(
-                    "NON_MANAGED_CONFLICT",
-                    f"refusing non-managed unsafe path: {change.target}",
-                    evidence={"target": str(change.target)},
-                    remediation="Remove the symlink or reparse ancestor, then retry.",
-                )
-            logical = change.target.relative_to(paths.home).as_posix()
-            desired_hash = sha256_bytes(change.content)
-            if change.target.exists() or change.target.is_symlink():
-                if not is_safe_adapter_file(change.target, adapter_home=paths.home):
-                    raise ProjectRulesError(
-                        "NON_MANAGED_CONFLICT",
-                        f"refusing to overwrite non-managed file: {change.target}",
-                        evidence={"target": str(change.target)},
-                        remediation="Move or rename the conflicting file, then retry.",
-                    )
-                current_hash = sha256_bytes(change.target.read_bytes())
-                if current_hash == desired_hash:
-                    entries.append(
-                        ManagedEntry(
-                            logical,
-                            self._resource_kind(change.target, paths),
-                            desired_hash,
-                        )
-                    )
-                    continue
-                if managed.get(logical) != current_hash and not (
-                    allow_managed_drift and logical in managed
-                ):
-                    raise ProjectRulesError(
-                        "NON_MANAGED_CONFLICT",
-                        f"refusing to overwrite non-managed file: {change.target}",
-                        evidence={"target": str(change.target)},
-                        remediation="Move or rename the conflicting file, then retry.",
-                    )
-            changes.append(change)
-            entries.append(
-                ManagedEntry(logical, self._resource_kind(change.target, paths), desired_hash)
-            )
-        manifest_path = paths.manifest_path(self.id)
-        manifest_content = ManagedManifest(
-            schema_version=2,
+        changes = self._resource_changes(paths, catalog, selection)
+        return build_managed_install_plan(
             adapter=self.id,
+            paths=paths,
             resource_version=catalog.rules_version,
-            selection=ManagedSelection(
-                rules=selection.rules,
-                skills=selection.skills,
-                agents=selection.agents,
-            ),
-            entries=tuple(entries),
-        ).to_bytes(manifest_path)
-        if not manifest_path.is_file() or manifest_path.read_bytes() != manifest_content:
-            changes.append(Change(action="write", target=manifest_path, content=manifest_content))
-        return ChangePlan(scope="user:codex", changes=tuple(changes))
+            selection=selection,
+            changes=changes,
+            resource_kind={
+                change.target: self._resource_kind(change.target, paths)
+                for change in changes
+            },
+            scope="user:codex",
+            allow_managed_drift=allow_managed_drift,
+        )
 
     def plan_project_init(
         self,
@@ -194,13 +142,6 @@ class CodexAdapter:
             scope="project:codex",
             changes=tuple(change for change in changes if project_change_required(change)),
         )
-
-    def _managed_hashes(self, paths: UserPaths) -> dict[str, str]:
-        manifest_path = paths.manifest_path(self.id)
-        if not manifest_path.is_file():
-            return {}
-        manifest = ManagedManifest.load(manifest_path, expected_adapter=self.id)
-        return {entry.logical_path: entry.sha256 for entry in manifest.entries}
 
     def _resource_changes(
         self,

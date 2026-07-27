@@ -67,6 +67,13 @@ def test_pull_request_rule_preserves_pr_002_clause() -> None:
         assert resource_root().joinpath(definition.file).is_file(), definition.agent_id
 
 
+def test_claude_adapter_templates_are_packaged() -> None:
+    templates = resource_root().joinpath("adapters/claude/templates")
+
+    for name in ("rule.md.j2", "skill.md.j2", "agent.md.j2"):
+        assert templates.joinpath(name).is_file(), name
+
+
 def test_codex_adapter_contains_all_explicit_governance_entries() -> None:
     skills = resource_root().joinpath("adapters/codex/skills")
 

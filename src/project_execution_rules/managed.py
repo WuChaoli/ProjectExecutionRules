@@ -11,7 +11,9 @@ from pathlib import Path, PurePosixPath
 from typing import cast
 
 from project_execution_rules.errors import ProjectRulesError
-from project_execution_rules.models import AdapterId
+from project_execution_rules.models import AdapterId, Change, ChangePlan
+from project_execution_rules.paths import UserPaths
+from project_execution_rules.selection import CatalogSelection
 
 _SCHEMA_VERSION = 2
 _ENTRY_KINDS = {"rule", "skill", "agent"}
@@ -23,6 +25,78 @@ _ENTRY_KEYS = {"logical_path", "kind", "sha256"}
 
 def sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def build_managed_install_plan(
+    *,
+    adapter: AdapterId,
+    paths: UserPaths,
+    resource_version: str,
+    selection: CatalogSelection,
+    changes: tuple[Change, ...],
+    resource_kind: Mapping[Path, str],
+    scope: str,
+    allow_managed_drift: bool = False,
+) -> ChangePlan:
+    """Build an Adapter manifest plan without overwriting user-owned files."""
+    manifest_path = paths.manifest_path(adapter)
+    managed: dict[str, str] = {}
+    if manifest_path.is_file():
+        manifest = ManagedManifest.load(manifest_path, expected_adapter=adapter)
+        managed = {entry.logical_path: entry.sha256 for entry in manifest.entries}
+
+    planned: list[Change] = []
+    entries: list[ManagedEntry] = []
+    for change in changes:
+        if not is_safe_adapter_path(change.target, adapter_home=paths.home):
+            raise ProjectRulesError(
+                "NON_MANAGED_CONFLICT",
+                f"refusing non-managed unsafe path: {change.target}",
+                evidence={"target": str(change.target)},
+                remediation="Remove the symlink or reparse ancestor, then retry.",
+            )
+        logical = change.target.relative_to(paths.home).as_posix()
+        desired_hash = sha256_bytes(change.content)
+        if change.target.exists() or change.target.is_symlink():
+            if not is_safe_adapter_file(change.target, adapter_home=paths.home):
+                raise ProjectRulesError(
+                    "NON_MANAGED_CONFLICT",
+                    f"refusing to overwrite non-managed file: {change.target}",
+                    evidence={"target": str(change.target)},
+                    remediation="Move or rename the conflicting file, then retry.",
+                )
+            current_hash = sha256_bytes(change.target.read_bytes())
+            if current_hash == desired_hash:
+                entries.append(
+                    ManagedEntry(logical, resource_kind[change.target], desired_hash)
+                )
+                continue
+            if managed.get(logical) != current_hash and not (
+                allow_managed_drift and logical in managed
+            ):
+                raise ProjectRulesError(
+                    "NON_MANAGED_CONFLICT",
+                    f"refusing to overwrite non-managed file: {change.target}",
+                    evidence={"target": str(change.target)},
+                    remediation="Move or rename the conflicting file, then retry.",
+                )
+        planned.append(change)
+        entries.append(ManagedEntry(logical, resource_kind[change.target], desired_hash))
+
+    manifest_content = ManagedManifest(
+        schema_version=2,
+        adapter=adapter,
+        resource_version=resource_version,
+        selection=ManagedSelection(
+            rules=selection.rules,
+            skills=selection.skills,
+            agents=selection.agents,
+        ),
+        entries=tuple(entries),
+    ).to_bytes(manifest_path)
+    if not manifest_path.is_file() or manifest_path.read_bytes() != manifest_content:
+        planned.append(Change(action="write", target=manifest_path, content=manifest_content))
+    return ChangePlan(scope=scope, changes=tuple(planned))
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from project_execution_rules.adapters import get_adapter
 from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.install import (
@@ -22,6 +23,7 @@ from project_execution_rules.managed import (
 )
 from project_execution_rules.models import AdapterId
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.selection import resolve_catalog_selection
 from project_execution_rules.yaml_utils import as_mapping, as_string, load_mapping
 
 
@@ -32,7 +34,22 @@ def _paths(tmp_path: Path) -> UserPaths:
     )
 
 
-def test_user_install_plan_contains_rules_agent_and_skill(tmp_path: Path) -> None:
+def test_claude_install_plan_never_manages_global_claude_md(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    catalog = load_builtin_catalog()
+    selection = resolve_catalog_selection(
+        catalog,
+        catalog.rules,
+        adapter=AdapterId.CLAUDE,
+    )
+
+    plan = get_adapter(AdapterId.CLAUDE).plan_install(paths, catalog, selection)
+
+    assert paths.claude_home / "CLAUDE.md" not in {
+        change.target for change in plan.changes
+    }
+
+
     paths = _paths(tmp_path)
 
     plan = plan_user_install(paths, load_builtin_catalog())
