@@ -58,7 +58,9 @@ def test_activation_requires_exact_trigger_fields() -> None:
                 domain="example",
                 file="core/example.md",
                 activation=activation,
-                **fields,
+                paths=fields.get("paths", ()),
+                tasks=fields.get("tasks", ()),
+                commands=fields.get("commands", ()),
             )
 
 
