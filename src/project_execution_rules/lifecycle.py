@@ -8,8 +8,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-import yaml
-
 from project_execution_rules.catalog import resource_root
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.initialize import ProjectSelection
@@ -26,9 +24,11 @@ from project_execution_rules.models import (
     ChangePlan,
     OperationReport,
     RuleCatalog,
+    RuleSet,
 )
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.rendering import render_agents
+from project_execution_rules.rulesets import load_ruleset, render_ruleset
 from project_execution_rules.transactions import FileTransaction, resolve_target_within_root
 from project_execution_rules.yaml_utils import (
     as_mapping,
@@ -126,9 +126,8 @@ def summarize_update(
     ruleset_path = root.resolve() / ".rules" / "ruleset.yaml"
     if ruleset_path.is_file():
         try:
-            ruleset = load_mapping(ruleset_path.read_text(encoding="utf-8"), name="Rule Set")
-            schema_compatible = ruleset.get("schema_version") == catalog.schema_version
-        except (OSError, ValueError):
+            load_ruleset(ruleset_path)
+        except ProjectRulesError:
             schema_compatible = False
     return {
         "rules_version": {
@@ -152,15 +151,19 @@ def summarize_update(
 
 
 def plan_project_update(root: Path, catalog: RuleCatalog) -> ChangePlan:
-    raw = _load_ruleset(root.resolve())
-    if raw.get("rules_version") == catalog.rules_version:
+    ruleset = load_ruleset(root.resolve() / ".rules" / "ruleset.yaml")
+    if ruleset.rules_version == catalog.rules_version:
         return ChangePlan(scope="project", changes=())
-    raw["rules_version"] = catalog.rules_version
-    content = yaml.safe_dump(
-        raw,
-        allow_unicode=True,
-        sort_keys=False,
-    ).encode()
+    updated = RuleSet(
+        schema_version=ruleset.schema_version,
+        rules_version=catalog.rules_version,
+        adapters=ruleset.adapters,
+        profile=ruleset.profile,
+        core_domains=ruleset.core_domains,
+        profile_domains=ruleset.profile_domains,
+        overrides=ruleset.overrides,
+    )
+    content = render_ruleset(updated).encode()
     return ChangePlan(
         scope="project",
         changes=(
@@ -173,17 +176,14 @@ def plan_project_update(root: Path, catalog: RuleCatalog) -> ChangePlan:
     )
 
 
-def _load_ruleset(root: Path) -> dict[str, object]:
+def _load_ruleset(root: Path) -> RuleSet:
     path = root / ".rules" / "ruleset.yaml"
     if not path.is_file():
         raise ProjectRulesError(
             "RULESET_MISSING",
             "project Rule Set does not exist",
         )
-    try:
-        return load_mapping(path.read_text(encoding="utf-8"), name="Rule Set")
-    except ValueError as error:
-        raise ProjectRulesError("RULESET_INVALID", str(error)) from error
+    return load_ruleset(path)
 
 
 def _actual_link_verifier(link: Path, target: Path) -> bool:
@@ -197,13 +197,9 @@ def plan_repair(
     link_verifier: Callable[[Path, Path], bool] = _actual_link_verifier,
 ) -> ChangePlan:
     resolved = root.resolve()
-    raw = _load_ruleset(resolved)
-    try:
-        domains_raw = as_mapping(raw.get("domains", {}), name="Rule Set domains")
-        core = as_string_tuple(domains_raw.get("core", ()), name="Core domains")
-        profile = as_string_tuple(domains_raw.get("profile", ()), name="Profile domains")
-    except ValueError as error:
-        raise ProjectRulesError("RULESET_INVALID", str(error)) from error
+    ruleset = _load_ruleset(resolved)
+    core = ruleset.core_domains
+    profile = ruleset.profile_domains
     changes: list[Change] = []
     for domain in core + profile:
         link = resolved / ".rules" / f"{domain}-rules.md"
@@ -230,14 +226,8 @@ def plan_uninstall(
     include_user: bool,
 ) -> ChangePlan:
     resolved = root.resolve()
-    raw = _load_ruleset(resolved)
-    try:
-        domains_raw = as_mapping(raw.get("domains", {}), name="Rule Set domains")
-        core = as_string_tuple(domains_raw.get("core", ()), name="Core domains")
-        profile = as_string_tuple(domains_raw.get("profile", ()), name="Profile domains")
-        domains = core + profile
-    except ValueError as error:
-        raise ProjectRulesError("RULESET_INVALID", str(error)) from error
+    ruleset = _load_ruleset(resolved)
+    domains = ruleset.domains
     changes: list[Change] = []
     for domain in domains:
         link = resolved / ".rules" / f"{domain}-rules.md"
@@ -252,7 +242,7 @@ def plan_uninstall(
         changes.append(Change(action="remove", target=link))
     changes.append(Change(action="remove", target=resolved / ".rules" / "ruleset.yaml"))
     agents = resolved / "AGENTS.md"
-    desired_agents = render_agents(ProjectSelection(core_domains=core))
+    desired_agents = render_agents(ProjectSelection(core_domains=ruleset.core_domains))
     if agents.is_file() and agents.read_text(encoding="utf-8") == desired_agents:
         changes.append(Change(action="remove", target=agents))
     if include_user:

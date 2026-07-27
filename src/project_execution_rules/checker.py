@@ -15,12 +15,12 @@ from project_execution_rules.managed import ManagedManifest, sha256_bytes
 from project_execution_rules.models import AdapterId, CheckIssue, CheckReport, ProjectState
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.rendering import route_row
+from project_execution_rules.rulesets import load_ruleset
 from project_execution_rules.yaml_utils import (
     as_mapping,
     as_object_tuple,
     as_string,
     as_string_tuple,
-    load_mapping,
 )
 
 LinkVerifier = Callable[[Path, Path], bool]
@@ -159,38 +159,15 @@ def check_project(
     issues = list(validate_catalog_resources(load_builtin_catalog()))
     issues.extend(_managed_user_issues(paths))
     try:
-        raw = load_mapping(
-            ruleset_path.read_text(encoding="utf-8"),
-            name="Rule Set",
-        )
-    except (OSError, ValueError) as error:
+        ruleset = load_ruleset(ruleset_path)
+    except ProjectRulesError as error:
         return CheckReport(
             state=ProjectState.INCOMPATIBLE,
-            issues=(_issue("RULESET_INVALID", str(error)),),
-        )
-    if raw.get("schema_version") != 1:
-        return CheckReport(
-            state=ProjectState.INCOMPATIBLE,
-            issues=(
-                _issue(
-                    "RULESET_SCHEMA_INCOMPATIBLE",
-                    "Rule Set schema is not supported",
-                    schema=raw.get("schema_version"),
-                ),
-            ),
+            issues=(_issue(error.code, error.message, **error.evidence),),
         )
     catalog = load_builtin_catalog()
-    try:
-        domains_raw = as_mapping(raw.get("domains", {}), name="Rule Set domains")
-        domains = as_string_tuple(
-            domains_raw.get("core", ()), name="Core domains"
-        ) + as_string_tuple(domains_raw.get("profile", ()), name="Profile domains")
-        overrides = as_string_tuple(raw.get("overrides", ()), name="Overrides")
-    except ValueError as error:
-        return CheckReport(
-            state=ProjectState.INCOMPATIBLE,
-            issues=(_issue("RULESET_INVALID", str(error)),),
-        )
+    domains = ruleset.domains
+    overrides = ruleset.overrides.get(AdapterId.CODEX, ())
     loaded_rule_bytes = 0
     for domain in domains:
         if domain not in catalog.rules:
@@ -300,7 +277,7 @@ def check_project(
         )
     version_state = (
         ProjectState.UPDATE_AVAILABLE
-        if str(raw.get("rules_version")) != catalog.rules_version
+        if ruleset.rules_version != catalog.rules_version
         else ProjectState.HEALTHY
     )
     return CheckReport(

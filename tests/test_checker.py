@@ -101,7 +101,7 @@ def test_check_reports_incompatible_schema(tmp_path: Path) -> None:
     root, paths, tracked = _healthy_project(tmp_path)
     ruleset = root / ".rules" / "ruleset.yaml"
     ruleset.write_text(
-        ruleset.read_text(encoding="utf-8").replace("schema_version: 1", "schema_version: 9"),
+        ruleset.read_text(encoding="utf-8").replace("schema_version: 2", "schema_version: 9"),
         encoding="utf-8",
     )
 

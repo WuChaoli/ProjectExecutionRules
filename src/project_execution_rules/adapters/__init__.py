@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from project_execution_rules.adapters.base import Adapter, AdapterDetection, CommandRunner
+from project_execution_rules.adapters.codex import CodexAdapter
 from project_execution_rules.detection import ProjectFacts
 from project_execution_rules.initialize import ProjectSelection
 from project_execution_rules.models import AdapterId, ChangePlan, RuleCatalog
@@ -46,7 +47,7 @@ class _PlaceholderAdapter:
 
 
 _ADAPTERS: Mapping[AdapterId, Adapter] = {
-    AdapterId.CODEX: _PlaceholderAdapter(AdapterId.CODEX, "codex"),
+    AdapterId.CODEX: CodexAdapter(),
     AdapterId.CLAUDE: _PlaceholderAdapter(AdapterId.CLAUDE, "claude"),
 }
 

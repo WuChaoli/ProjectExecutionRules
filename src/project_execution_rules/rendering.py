@@ -5,7 +5,7 @@ import yaml
 from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.detection import ProjectFacts
 from project_execution_rules.initialize import ProjectSelection
-from project_execution_rules.models import ActivationType, RuleDefinition
+from project_execution_rules.models import ActivationType, AdapterId, RuleDefinition
 
 _EXPLICIT_ENTRIES = {
     "agent-governance": "Codex Skill `$agent-governance`",
@@ -86,24 +86,14 @@ def render_agents(selection: ProjectSelection) -> str:
 """
 
 
-def render_ruleset(selection: ProjectSelection) -> str:
-    catalog = load_builtin_catalog()
-    core = "\n".join(f"    - {domain}" for domain in selection.core_domains)
-    overrides = "\n".join(f"  - {domain}" for domain in selection.override_domains)
-    return f"""schema_version: 1
-rules_version: {catalog.rules_version}
-adapter: codex
-profile: python
+def render_ruleset(
+    selection: ProjectSelection,
+    *,
+    adapters: tuple[AdapterId, ...] = (AdapterId.CODEX,),
+) -> str:
+    from project_execution_rules.adapters.codex import render_project_ruleset
 
-domains:
-  core:
-{core}
-  profile:
-    - python
-
-overrides:
-{overrides if overrides else "  []"}
-"""
+    return render_project_ruleset(selection, adapters=adapters)
 
 
 def render_python_override(facts: ProjectFacts) -> str:

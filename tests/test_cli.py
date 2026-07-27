@@ -139,16 +139,18 @@ def test_update_stops_when_user_level_update_is_declined(tmp_path: Path) -> None
     rules.mkdir(parents=True)
     ruleset = rules / "ruleset.yaml"
     ruleset.write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 0.9.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
     - security
   profile:
     - python
-overrides: []
+overrides:
+  codex: []
 """,
         encoding="utf-8",
     )

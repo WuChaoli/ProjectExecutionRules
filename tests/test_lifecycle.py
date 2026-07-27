@@ -68,9 +68,10 @@ def test_repair_plan_only_targets_managed_structure(tmp_path: Path) -> None:
     rules = root / ".rules"
     rules.mkdir(parents=True)
     (rules / "ruleset.yaml").write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 1.0.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
@@ -78,7 +79,8 @@ domains:
   profile:
     - python
 overrides:
-  - python
+  codex:
+    - python
 """,
         encoding="utf-8",
     )
@@ -103,15 +105,17 @@ def test_project_repair_refuses_missing_user_rule(tmp_path: Path) -> None:
     rules = root / ".rules"
     rules.mkdir(parents=True)
     (rules / "ruleset.yaml").write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 1.0.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
     - security
   profile: []
-overrides: []
+overrides:
+  codex: []
 """,
         encoding="utf-8",
     )
@@ -127,9 +131,10 @@ def test_uninstall_preserves_overrides(tmp_path: Path) -> None:
     rules = root / ".rules"
     rules.mkdir(parents=True)
     (rules / "ruleset.yaml").write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 1.0.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
@@ -137,7 +142,8 @@ domains:
   profile:
     - python
 overrides:
-  - python
+  codex:
+    - python
 """,
         encoding="utf-8",
     )
@@ -155,15 +161,17 @@ def test_uninstall_refuses_regular_file_in_managed_link_slot(tmp_path: Path) -> 
     rules = root / ".rules"
     rules.mkdir(parents=True)
     (rules / "ruleset.yaml").write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 1.0.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
     - security
   profile: []
-overrides: []
+overrides:
+  codex: []
 """,
         encoding="utf-8",
     )
@@ -179,9 +187,10 @@ def test_project_update_changes_only_declared_rules_version(tmp_path: Path) -> N
     rules.mkdir(parents=True)
     ruleset = rules / "ruleset.yaml"
     ruleset.write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 0.9.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
@@ -189,7 +198,8 @@ domains:
   profile:
     - python
 overrides:
-  - python
+  codex:
+    - python
 """,
         encoding="utf-8",
     )
@@ -199,7 +209,7 @@ overrides:
     assert len(plan.changes) == 1
     content = plan.changes[0].content.decode()
     assert "rules_version: 1.0.0" in content
-    assert "overrides:\n- python" in content
+    assert "overrides:\n  codex:\n  - python" in content
 
 
 def test_user_uninstall_is_a_separate_scope(tmp_path: Path) -> None:

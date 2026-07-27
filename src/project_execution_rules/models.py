@@ -151,11 +151,13 @@ class RuleCatalog:
 class RuleSet:
     schema_version: int
     rules_version: str
-    adapter: str
+    adapters: tuple[AdapterId, ...]
     profile: str
     core_domains: tuple[str, ...]
     profile_domains: tuple[str, ...]
-    overrides: tuple[str, ...] = ()
+    overrides: dict[AdapterId, tuple[str, ...]] = field(
+        default_factory=lambda: dict[AdapterId, tuple[str, ...]]()
+    )
 
     @property
     def domains(self) -> tuple[str, ...]:

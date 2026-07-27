@@ -14,8 +14,9 @@ from project_execution_rules.initialize import (
     plan_project_init,
 )
 from project_execution_rules.install import install_user_resources, plan_user_install
-from project_execution_rules.models import ChangePlan
+from project_execution_rules.models import AdapterId, ChangePlan
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.rulesets import load_ruleset_text
 from project_execution_rules.yaml_utils import as_mapping, as_object_tuple
 
 
@@ -48,6 +49,7 @@ def test_init_plan_has_exact_links_and_no_empty_overrides(tmp_path: Path) -> Non
 
     plan = plan_project_init(root, detect_project(root), selection, paths)
 
+    assert plan.scope == "project"
     targets = {change.target.name for change in plan.changes}
     assert "python-rules.md" in targets
     assert "security-rules.md" in targets
@@ -55,6 +57,12 @@ def test_init_plan_has_exact_links_and_no_empty_overrides(tmp_path: Path) -> Non
     assert "testing-rules.override.md" not in targets
     assert "ruleset.yaml" in targets
     assert "AGENTS.md" in targets
+    ruleset_change = next(
+        change for change in plan.changes if change.target.name == "ruleset.yaml"
+    )
+    ruleset = load_ruleset_text(ruleset_change.content.decode())
+    assert ruleset.adapters == (AdapterId.CODEX,)
+    assert ruleset.overrides == {AdapterId.CODEX: ("python",)}
 
 
 def test_python_override_declares_structured_operations(tmp_path: Path) -> None:
@@ -187,6 +195,37 @@ def test_init_plan_is_empty_when_project_already_matches_desired_state(tmp_path:
     repeated_plan = plan_project_init(root, detect_project(root), selection, paths)
 
     assert repeated_plan.changes == ()
+
+
+def test_dry_run_planning_still_requires_git_repository(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    paths = UserPaths.from_environment({}, tmp_path / "home")
+
+    with pytest.raises(ProjectRulesError, match="Git repository"):
+        plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(core_domains=("security",)),
+            paths,
+            verify_user_install=False,
+        )
+
+
+def test_dry_run_planning_still_requires_supported_profile(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    paths = UserPaths.from_environment({}, tmp_path / "home")
+
+    with pytest.raises(ProjectRulesError, match="Python projects"):
+        plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(core_domains=("security",)),
+            paths,
+            verify_user_install=False,
+        )
 
 
 def test_initialize_empty_plan_does_not_probe_or_stage(tmp_path: Path) -> None:
