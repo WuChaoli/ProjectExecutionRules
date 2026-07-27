@@ -33,7 +33,7 @@ from project_execution_rules.lifecycle import (
     rollback_transaction,
     summarize_update,
 )
-from project_execution_rules.models import OutputFormat, RuleCatalog
+from project_execution_rules.models import AdapterId, OutputFormat, RuleCatalog
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.presentation import confirm_or_cancel, emit, fail
 from project_execution_rules.reviewer import review_rules
@@ -511,7 +511,11 @@ def rollback(
             dry_run=dry_run,
         )
         paths = _paths()
-        plan = plan_rollback(paths, transaction_id)
+        plan = plan_rollback(
+            paths,
+            transaction_id,
+            expected_adapter=AdapterId.CODEX,
+        )
         if dry_run:
             emit(plan, output_format)
             return
@@ -519,7 +523,11 @@ def rollback(
         if not confirmed:
             emit({"rolled_back": None}, output_format)
             return
-        rollback_transaction(paths, transaction_id)
+        rollback_transaction(
+            paths,
+            transaction_id,
+            expected_adapter=AdapterId.CODEX,
+        )
         emit({"rolled_back": transaction_id}, output_format)
     except ProjectRulesError as error:
         fail(error, output_format)

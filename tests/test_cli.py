@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from project_execution_rules.cli import app
@@ -180,6 +181,86 @@ def test_init_json_returns_stable_error_for_non_git_project(tmp_path: Path) -> N
     assert result.exit_code != 0
     payload = json.loads(result.stdout)
     assert payload["code"] == "GIT_REPOSITORY_MISSING"
+
+
+def _write_cli_rollback_transaction(
+    tmp_path: Path,
+    *,
+    adapter: object = None,
+    include_adapter: bool,
+) -> tuple[dict[str, str], Path]:
+    home = tmp_path / "home"
+    local = tmp_path / "local"
+    target = home / "managed.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("changed\n", encoding="utf-8")
+    transaction = local / "ProjectExecutionRules" / "transactions" / "deadbeef"
+    backup = local / "ProjectExecutionRules" / "backups" / "deadbeef" / "0.bin"
+    transaction.mkdir(parents=True)
+    backup.parent.mkdir(parents=True)
+    backup.write_text("original\n", encoding="utf-8")
+    payload: dict[str, object] = {
+        "authorized_root": str(home),
+        "originals": [
+            {
+                "target": "managed.md",
+                "kind": "file",
+                "backup": str(backup),
+                "link_target": "",
+            }
+        ],
+    }
+    if include_adapter:
+        payload["adapter"] = adapter
+    (transaction / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+    return {
+        "USERPROFILE": str(home),
+        "LOCALAPPDATA": str(local),
+    }, target
+
+
+@pytest.mark.parametrize(
+    ("adapter", "include_adapter"),
+    (("claude", True), (None, False)),
+)
+def test_cli_rollback_rejects_non_codex_transaction_before_modifying_target(
+    tmp_path: Path,
+    adapter: object,
+    include_adapter: bool,
+) -> None:
+    environment, target = _write_cli_rollback_transaction(
+        tmp_path,
+        adapter=adapter,
+        include_adapter=include_adapter,
+    )
+
+    result = runner.invoke(
+        app,
+        ["rollback", "deadbeef", "--yes", "--format", "json"],
+        env=environment,
+    )
+
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["code"].startswith("TRANSACTION_ADAPTER_")
+    assert target.read_text(encoding="utf-8") == "changed\n"
+
+
+def test_cli_rollback_preview_rejects_non_codex_transaction(tmp_path: Path) -> None:
+    environment, target = _write_cli_rollback_transaction(
+        tmp_path,
+        adapter="claude",
+        include_adapter=True,
+    )
+
+    result = runner.invoke(
+        app,
+        ["rollback", "deadbeef", "--dry-run", "--format", "json"],
+        env=environment,
+    )
+
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["code"] == "TRANSACTION_ADAPTER_MISMATCH"
+    assert target.read_text(encoding="utf-8") == "changed\n"
 
 
 def test_init_dry_run_reports_selected_triggers(tmp_path: Path) -> None:

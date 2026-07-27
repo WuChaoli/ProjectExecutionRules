@@ -505,7 +505,12 @@ def rollback_transaction(
             shutil.rmtree(path)
 
 
-def plan_rollback(paths: UserPaths, transaction_id: str) -> ChangePlan:
+def plan_rollback(
+    paths: UserPaths,
+    transaction_id: str,
+    *,
+    expected_adapter: AdapterId | str | None = None,
+) -> ChangePlan:
     if not transaction_id or any(
         character not in "0123456789abcdef" for character in transaction_id
     ):
@@ -523,6 +528,7 @@ def plan_rollback(paths: UserPaths, transaction_id: str) -> ChangePlan:
         cast(object, json.loads(manifest_path.read_text(encoding="utf-8"))),
         name="transaction manifest",
     )
+    _validate_transaction_adapter(raw, expected_adapter=expected_adapter)
     authorized_root = Path(as_string(raw["authorized_root"], name="authorized_root")).resolve()
     originals = as_object_tuple(raw.get("originals", ()), name="transaction originals")
     changes: list[Change] = []
