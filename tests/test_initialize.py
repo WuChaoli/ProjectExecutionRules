@@ -346,6 +346,40 @@ def test_init_rejects_cross_adapter_target_collisions(
     assert caught.value.code == "ADAPTER_PROJECT_COLLISION"
 
 
+def test_project_composition_preserves_leaf_symlink_target(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    victim = root / "victim.md"
+    victim.write_text("victim\n", encoding="utf-8")
+    link = root / "planned.md"
+    try:
+        link.symlink_to(victim)
+    except OSError as error:
+        pytest.skip(f"symbolic links are unavailable: {error}")
+    plan = ChangePlan(
+        scope="project:claude",
+        changes=(Change("write", link, b"replacement\n"),),
+    )
+
+    changes = compose_project_changes(root, ((AdapterId.CLAUDE, plan),))
+
+    assert changes[0].target == link
+    assert changes[0].target != victim
+    staged: list[tuple[Path, ...]] = []
+    report = initialize_project(
+        ChangePlan(scope="project", changes=changes),
+        root,
+        UserPaths.from_environment({}, tmp_path / "home"),
+        confirmed=True,
+        stage_files=lambda files: staged.append(files),
+    )
+
+    assert report.changed
+    assert not link.is_symlink()
+    assert link.read_bytes() == b"replacement\n"
+    assert victim.read_text(encoding="utf-8") == "victim\n"
+
+
 def test_project_composition_rejects_reserved_ruleset_target(tmp_path: Path) -> None:
     root = tmp_path / "project"
     root.mkdir()
@@ -358,6 +392,56 @@ def test_project_composition_rejects_reserved_ruleset_target(tmp_path: Path) -> 
         compose_project_changes(root, ((AdapterId.CODEX, plan),))
 
     assert caught.value.code == "ADAPTER_PROJECT_CONTRACT"
+
+
+def test_project_composition_rejects_reserved_ruleset_through_symlinked_parent(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = root / "outside-rules"
+    outside.mkdir()
+    try:
+        (root / ".rules").symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symbolic links are unavailable: {error}")
+    plan = ChangePlan(
+        scope="project:codex",
+        changes=(Change("write", root / ".rules" / "ruleset.yaml", b"adapter"),),
+    )
+
+    with pytest.raises(ProjectRulesError) as caught:
+        compose_project_changes(root, ((AdapterId.CODEX, plan),))
+
+    assert caught.value.code == "ADAPTER_PROJECT_CONTRACT"
+    assert not (outside / "ruleset.yaml").exists()
+
+
+def test_project_init_rejects_unsafe_ruleset_parent(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    outside = root / "outside-rules"
+    outside.mkdir()
+    try:
+        (root / ".rules").symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symbolic links are unavailable: {error}")
+    paths = _install_adapters(tmp_path, (AdapterId.CLAUDE,))
+
+    with pytest.raises(ProjectRulesError) as caught:
+        plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(
+                core_domains=("security",),
+                adapters=(AdapterId.CLAUDE,),
+            ),
+            paths,
+        )
+
+    assert caught.value.code == "ADAPTER_PROJECT_CONTRACT"
+    assert not (outside / "ruleset.yaml").exists()
 
 
 def test_project_composition_rejects_canonical_alias_collision(tmp_path: Path) -> None:

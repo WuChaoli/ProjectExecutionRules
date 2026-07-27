@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -346,6 +348,32 @@ def test_claude_project_init_preserves_existing_guide(tmp_path: Path) -> None:
     assert guide.read_text(encoding="utf-8") == "project-owned\n"
 
 
+def test_claude_project_init_preserves_symlinked_guide(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    paths = _install_claude(tmp_path)
+    guide = root / ".claude" / "CLAUDE.md"
+    guide.parent.mkdir(parents=True)
+    target = root / "project-guide.md"
+    target.write_text("project-owned\n", encoding="utf-8")
+    try:
+        guide.symlink_to(target)
+    except OSError as error:
+        pytest.skip(f"symbolic links are unavailable: {error}")
+
+    plan = get_adapter(AdapterId.CLAUDE).plan_project_init(
+        root,
+        detect_project(root),
+        ProjectSelection(core_domains=("security",)),
+        paths,
+    )
+
+    assert guide not in {change.target for change in plan.changes}
+    assert guide.is_symlink()
+    assert target.read_text(encoding="utf-8") == "project-owned\n"
+
+
 def test_claude_project_init_rejects_symlinked_claude_home(tmp_path: Path) -> None:
     root = tmp_path / "project"
     (root / ".git").mkdir(parents=True)
@@ -443,6 +471,41 @@ def test_claude_project_init_rejects_symlinked_rules_ancestor(tmp_path: Path) ->
         (claude_home / "rules").symlink_to(outside, target_is_directory=True)
     except OSError as error:
         pytest.skip(f"symbolic links are unavailable: {error}")
+
+    with pytest.raises(ProjectRulesError) as caught:
+        get_adapter(AdapterId.CLAUDE).plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(core_domains=("security",), override_domains=("python",)),
+            paths,
+        )
+
+    assert caught.value.code == "PROJECT_OWNERSHIP_CONFLICT"
+
+
+def test_claude_project_init_rejects_junctioned_rules_ancestor(tmp_path: Path) -> None:
+    if os.name != "nt":
+        pytest.skip("Windows junction test")
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        '[project]\nname="sample"\nrequires-python=">=3.11"\n',
+        encoding="utf-8",
+    )
+    paths = _install_claude(tmp_path)
+    claude_home = root / ".claude"
+    claude_home.mkdir()
+    outside = root / "outside-rules"
+    outside.mkdir()
+    junction = claude_home / "rules"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip("directory junction creation is unavailable")
 
     with pytest.raises(ProjectRulesError) as caught:
         get_adapter(AdapterId.CLAUDE).plan_project_init(

@@ -231,6 +231,37 @@ class ManagedManifest:
             raise _invalid_manifest_error(path, str(error)) from error
 
 
+def is_reparse_point(path: Path) -> bool:
+    """Return whether an existing path is a symlink or Windows reparse point."""
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return path.is_symlink() or bool(
+        getattr(metadata, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def has_reparse_ancestor(path: Path, *, root: Path) -> bool:
+    """Check path and its ancestors up to root without following reparse points."""
+    candidate = Path(os.path.abspath(path))
+    lexical_root = Path(os.path.abspath(root))
+    try:
+        candidate.relative_to(lexical_root)
+    except ValueError:
+        return True
+    current = candidate
+    while True:
+        if is_reparse_point(current):
+            return True
+        if current == lexical_root:
+            return False
+        current = current.parent
+
+
 def is_safe_adapter_path(target: Path, *, adapter_home: Path) -> bool:
     lexical_target = Path(os.path.abspath(target))
     lexical_home = Path(os.path.abspath(adapter_home))
@@ -239,25 +270,8 @@ def is_safe_adapter_path(target: Path, *, adapter_home: Path) -> bool:
     except ValueError:
         return False
 
-    current = lexical_target
-    while True:
-        try:
-            metadata = current.lstat()
-        except FileNotFoundError:
-            pass
-        except OSError:
-            return False
-        else:
-            if current.is_symlink() or (
-                getattr(metadata, "st_file_attributes", 0)
-                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-            ):
-                return False
-        if current == lexical_home:
-            break
-        if current.parent == current:
-            return False
-        current = current.parent
+    if has_reparse_ancestor(lexical_target, root=lexical_home):
+        return False
 
     try:
         lexical_target.parent.resolve(strict=False).relative_to(

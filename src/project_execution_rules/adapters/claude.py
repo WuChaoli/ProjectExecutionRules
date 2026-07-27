@@ -13,7 +13,11 @@ from project_execution_rules.detection import ProjectFacts
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.frontmatter import parse_frontmatter
 from project_execution_rules.initialize import ProjectSelection
-from project_execution_rules.managed import build_managed_install_plan
+from project_execution_rules.managed import (
+    build_managed_install_plan,
+    has_reparse_ancestor,
+    is_reparse_point,
+)
 from project_execution_rules.models import (
     AdapterId,
     Change,
@@ -86,7 +90,7 @@ class ClaudeAdapter:
             validate_user_install(self.id, selection, paths)
         changes: list[Change] = []
         project_claude_home = resolved / ".claude"
-        if project_claude_home.is_symlink() or (
+        if is_reparse_point(project_claude_home) or (
             project_claude_home.exists() and not project_claude_home.is_dir()
         ):
             raise ProjectRulesError(
@@ -95,13 +99,18 @@ class ClaudeAdapter:
                 evidence={"target": str(project_claude_home)},
             )
         guide = project_claude_home / "CLAUDE.md"
-        if guide.is_symlink() or (guide.exists() and not guide.is_file()):
+        if (
+            is_reparse_point(guide)
+            and not guide.is_symlink()
+            or guide.exists()
+            and not (guide.is_file() or guide.is_symlink())
+        ):
             raise ProjectRulesError(
                 "PROJECT_OWNERSHIP_CONFLICT",
                 f"Claude project guide target is unsafe: {guide}",
                 evidence={"target": str(guide)},
             )
-        if not guide.exists():
+        if not guide.exists() and not guide.is_symlink():
             changes.append(
                 Change(
                     action="write",
@@ -118,16 +127,16 @@ class ClaudeAdapter:
             content = render_python_project_extension(facts)
             if content:
                 rules_dir = project_claude_home / "rules"
-                if rules_dir.is_symlink() or (
-                    rules_dir.exists() and not rules_dir.is_dir()
-                ):
+                if has_reparse_ancestor(rules_dir, root=resolved):
                     raise ProjectRulesError(
                         "PROJECT_OWNERSHIP_CONFLICT",
                         f"Claude project rules directory is unsafe: {rules_dir}",
                         evidence={"target": str(rules_dir)},
                     )
                 target = rules_dir / f"{domain}.project.md"
-                if target.is_symlink() or (target.exists() and not target.is_file()):
+                if is_reparse_point(target) or (
+                    target.exists() and not target.is_file()
+                ):
                     raise ProjectRulesError(
                         "PROJECT_OWNERSHIP_CONFLICT",
                         f"Claude Project Rule Extension target is unsafe: {target}",

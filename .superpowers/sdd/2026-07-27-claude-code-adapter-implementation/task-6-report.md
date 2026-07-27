@@ -11,25 +11,27 @@
 3. GREEN：实现 Adapter-composed project plan、Claude scaffold、共享 Rule Set、闭包校验、碰撞检测和按计划 symlink probe 后，focused 集合通过。
 4. 补充损坏 manifest 缺少 selected entry 的闭包测试，先确认 `DID NOT RAISE` RED，再校验 selection、entries 和 checksum closure，回归测试转 GREEN。
 5. Review fix round 1 先补真实 CLI、extension ownership、exact closure、reserved/canonical target 回归；观察 6 个行为失败与缺失 composition API 的 collection RED，再逐项修复并转 GREEN。
+6. Review fix round 2 用真实 leaf symlink 复现 compose 将 target 改写为 victim、guide symlink 错拒及 `.rules` symlink 绕过；4 个测试 RED 后改为 lexical identity + resolved parent/basename，并补 Windows junction/reparse 回归。
 
 ## 实施内容
 
 - `ProjectSelection` 记录 selected adapters；`plan_project_init` 按 Registry 顺序组合各 Adapter project plan。
 - selected Adapter 必须存在 matching manifest v2；manifest selection 必须是按 Adapter 重新解析的完整 Catalog closure，entries 必须 exact、kind 正确，每个普通文件路径与 checksum 必须匹配；之后才验证 project closure 是 installed closure 子集。init 不安装或修复用户级资源。
 - 真实 CLI `init` 只执行 project planning/apply；缺失或漂移的用户级资源明确提示单独运行 install，且 init 前后用户资源与 manifests 保持逐字节不变。
-- Claude 仅在缺失时初始化 `.claude/CLAUDE.md`；既有普通 guide 保留，symlink、directory 或 reparse 冲突拒绝。
+- Claude 仅在缺失时初始化 `.claude/CLAUDE.md`；既有普通 guide 与 leaf symlink guide 均保留，directory 或非 symlink reparse 冲突拒绝。
 - Claude 仅在 extension target 缺失时生成非空 `.claude/rules/<rule-id>.project.md`；既有普通 extension 永不重写，unsafe target/ancestor 拒绝；不创建空 extension、skills/agents 空目录，也不复制或链接 Claude Base Rules/Skills/Agents。
 - Claude guide 说明 Rule→Skill→Agent 职责，以及本地 `.claude/rules|skills|agents` 的项目生长入口。
 - `.rules/ruleset.yaml` 由组合层唯一生成并作为 orchestrator reserved target；任何 Adapter 计划该 target 都立即报 contract error。
-- project targets 先规范化并约束在 project root 内，再按 canonical identity 去重；alias 对同一目标的不同 action/content 触发 `ADAPTER_PROJECT_COLLISION`。
+- project targets 以 lexical normalized project-relative path 识别 reserved target，再解析安全 parent 并拼回原 basename；不 dereference leaf symlink。最终 targets 约束在 project root 内，alias 对同一目标的不同 action/content 触发 `ADAPTER_PROJECT_COLLISION`。
+- Claude 与 shared Rule Set 的 ancestor 链统一拒绝 symlink、Windows junction 和其他 reparse point；`.rules/ruleset.yaml` 的 reserved 检查先于 ancestor 解析。
 - symlink capability 仅在实际 plan 含 symlink 时探测；Claude-only init 不依赖 Windows Developer Mode。
 - staging 仅包含项目 guide、共享 Rule Set 与 Project Rule Extensions/Overrides，不包含 empty dirs 或 Base links。
 - 项目生成内容保持项目所有权，不写入 Adapter managed manifest。
 
 ## 验证摘要
 
-- Focused + CLI + Windows workflow：`54 passed`
-- Full pytest：`166 passed`
+- Focused + CLI + Windows workflow：`59 passed`
+- Full pytest：`171 passed`
 - Ruff：`All checks passed!`
 - Full Pyright：`0 errors, 0 warnings, 0 informations`
 - Diff check：通过

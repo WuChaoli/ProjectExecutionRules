@@ -11,6 +11,7 @@ from project_execution_rules.doctor import probe_symlink_capability
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.managed import (
     ManagedManifest,
+    has_reparse_ancestor,
     is_current_managed_file,
     sha256_bytes,
 )
@@ -173,46 +174,63 @@ def compose_project_changes(
     plans: tuple[tuple[AdapterId, ChangePlan], ...],
 ) -> tuple[Change, ...]:
     resolved_root = root.resolve()
-    reserved = resolved_root / ".rules" / "ruleset.yaml"
+    lexical_root = Path(os.path.abspath(root))
+    reserved = lexical_root / ".rules" / "ruleset.yaml"
     changes: list[Change] = []
     owners: dict[Path, tuple[AdapterId, Change]] = {}
     for adapter, plan in plans:
         for change in plan.changes:
-            canonical = change.target.resolve(strict=False)
+            candidate = Path(os.path.abspath(change.target))
             try:
-                canonical.relative_to(resolved_root)
+                candidate.relative_to(lexical_root)
             except ValueError as error:
                 raise ProjectRulesError(
                     "ADAPTER_PROJECT_CONTRACT",
                     f"Adapter planned a target outside the project: {change.target}",
                     evidence={"adapter": adapter.value, "target": str(change.target)},
                 ) from error
-            if canonical == reserved:
+            if candidate == reserved:
                 raise ProjectRulesError(
                     "ADAPTER_PROJECT_CONTRACT",
                     "Adapter planned the orchestrator-reserved Rule Set target",
                     evidence={"adapter": adapter.value, "target": str(change.target)},
                 )
+            if has_reparse_ancestor(candidate.parent, root=lexical_root):
+                raise ProjectRulesError(
+                    "ADAPTER_PROJECT_CONTRACT",
+                    f"Adapter planned a target through an unsafe project path: {change.target}",
+                    evidence={"adapter": adapter.value, "target": str(change.target)},
+                )
+            canonical_parent = candidate.parent.resolve(strict=False)
+            try:
+                canonical_parent.relative_to(resolved_root)
+            except ValueError as error:
+                raise ProjectRulesError(
+                    "ADAPTER_PROJECT_CONTRACT",
+                    f"Adapter planned a target outside the project: {change.target}",
+                    evidence={"adapter": adapter.value, "target": str(change.target)},
+                ) from error
+            safe_target = canonical_parent / candidate.name
             normalized = Change(
                 action=change.action,
-                target=canonical,
+                target=safe_target,
                 content=change.content,
                 link_target=change.link_target,
             )
-            previous = owners.get(canonical)
+            previous = owners.get(safe_target)
             if previous is not None:
                 previous_adapter, previous_change = previous
                 if previous_change != normalized:
                     raise ProjectRulesError(
                         "ADAPTER_PROJECT_COLLISION",
-                        f"Adapters plan conflicting project changes: {canonical}",
+                        f"Adapters plan conflicting project changes: {safe_target}",
                         evidence={
-                            "target": str(canonical),
+                            "target": str(safe_target),
                             "adapters": [previous_adapter.value, adapter.value],
                         },
                     )
                 continue
-            owners[canonical] = (adapter, normalized)
+            owners[safe_target] = (adapter, normalized)
             changes.append(normalized)
     return tuple(changes)
 
@@ -259,9 +277,16 @@ def plan_project_init(
         for adapter in selected_adapters
     )
     changes = list(compose_project_changes(root, adapter_plans))
+    ruleset_target = root.resolve() / ".rules" / "ruleset.yaml"
+    if has_reparse_ancestor(ruleset_target.parent, root=root.resolve()):
+        raise ProjectRulesError(
+            "ADAPTER_PROJECT_CONTRACT",
+            "shared Rule Set target uses an unsafe project path",
+            evidence={"target": str(ruleset_target)},
+        )
     ruleset = Change(
         action="write",
-        target=root.resolve() / ".rules" / "ruleset.yaml",
+        target=ruleset_target,
         content=render_ruleset(selection, adapters=selected_adapters).encode(),
     )
     if project_change_required(ruleset):
