@@ -7,61 +7,61 @@ profiles:
 
 skills:
   git:
-    file: rules/core/git-rules.md
+    file: skills/git/SKILL.md
     invocation: model
     adapters:
       - codex
       - claude
   pull-request:
-    file: rules/core/pull-request-rules.md
+    file: skills/pull-request/SKILL.md
     invocation: model
     adapters:
       - codex
       - claude
   debug:
-    file: rules/core/debug-rules.md
+    file: skills/debug/SKILL.md
     invocation: model
     adapters:
       - codex
       - claude
   observability:
-    file: rules/core/observability-rules.md
+    file: skills/observability/SKILL.md
     invocation: model
     adapters:
       - codex
       - claude
   architecture:
-    file: rules/core/architecture-rules.md
+    file: skills/architecture/SKILL.md
     invocation: model
     adapters:
       - codex
       - claude
   external-services:
-    file: rules/core/external-services-rules.md
+    file: skills/external-services/SKILL.md
     invocation: model
     adapters:
       - codex
       - claude
   rules-reviewer:
-    file: adapters/codex/skills/rules-reviewer/SKILL.md
+    file: skills/rules-reviewer/SKILL.md
     invocation: user
     adapters:
       - codex
       - claude
   agent-governance:
-    file: adapters/codex/skills/agent-governance/SKILL.md
+    file: skills/agent-governance/SKILL.md
     invocation: user
     adapters:
       - codex
   tool-governance:
-    file: adapters/codex/skills/tool-governance/SKILL.md
+    file: skills/tool-governance/SKILL.md
     invocation: user
     adapters:
       - codex
 
 agents:
   rules-reviewer:
-    file: adapters/codex/agents/rules-reviewer.toml
+    file: agents/rules-reviewer.md
     skills:
       - pull-request
     adapters:

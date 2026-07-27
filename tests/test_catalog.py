@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from project_execution_rules.catalog import load_builtin_catalog, validate_catalog_resources
-from project_execution_rules.models import ActivationType, AdapterId, RuleCatalog, RuleDefinition
+from project_execution_rules.models import ActivationType, RuleCatalog, RuleDefinition
 
 
 def test_catalog_v2_resolves_rule_dependencies() -> None:
