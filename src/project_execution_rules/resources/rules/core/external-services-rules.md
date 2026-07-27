@@ -8,8 +8,9 @@
 
 - `EXT-002`：默认开发与测试使用 Fake 或受控 Mock，不隐式回退真实服务。
 - `EXT-003`：超时、重试和失败语义必须显式且有界。
+- Invoke the Catalog-declared `external-services` Skill for the task workflow。
 
-## 验证要求
+## MUST
 
 - `EXT-004`：真实集成验证必须单独授权并明确凭据与副作用边界。
 

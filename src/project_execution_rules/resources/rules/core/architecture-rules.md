@@ -8,8 +8,9 @@
 
 - `ARC-002`：模块保持单一职责，通过明确接口协作。
 - `ARC-003`：外部资源必须在组合根显式装配，不得由核心模块隐式创建。
+- Invoke the Catalog-declared `architecture` Skill for the task workflow。
 
-## 验证要求
+## MUST
 
 - `ARC-004`：架构变更必须验证公共接口、依赖方向和关键数据流。
 

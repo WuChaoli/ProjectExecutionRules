@@ -8,8 +8,9 @@
 
 - `DBG-002`：一次验证一个假设，优先定位根因而不是叠加补丁。
 - `DBG-003`：诊断请求不自动授权修复或扩大副作用范围。
+- Invoke the Catalog-declared `debug` Skill for the task workflow。
 
-## 验证要求
+## MUST
 
 - `DBG-004`：修复必须通过原始复现路径和回归测试验证。
 

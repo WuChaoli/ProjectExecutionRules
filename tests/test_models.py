@@ -41,13 +41,25 @@ def test_v2_resource_definitions_are_typed() -> None:
         )
 
 
-def test_paths_activation_requires_at_least_one_pattern() -> None:
-    with pytest.raises(ValueError, match="requires paths"):
-        RuleDefinition(
-            domain="python",
-            file="profiles/python/python-rules.md",
-            activation=ActivationType.PATHS,
-        )
+def test_activation_requires_exact_trigger_fields() -> None:
+    invalid = (
+        (ActivationType.ALWAYS, {"paths": ("**/*.py",)}),
+        (ActivationType.PATHS, {"paths": ()}),
+        (ActivationType.PATHS, {"paths": ("**/*.py",), "tasks": ("test",)}),
+        (ActivationType.TASK, {"tasks": ()}),
+        (ActivationType.TASK, {"tasks": ("test",), "commands": ("check",)}),
+        (ActivationType.EXPLICIT, {"commands": ()}),
+        (ActivationType.EXPLICIT, {"commands": ("check",), "paths": ("*.py",)}),
+    )
+
+    for activation, fields in invalid:
+        with pytest.raises(ValueError, match="activation"):
+            RuleDefinition(
+                domain="example",
+                file="core/example.md",
+                activation=activation,
+                **fields,
+            )
 
 
 def test_check_report_serializes_stable_json() -> None:

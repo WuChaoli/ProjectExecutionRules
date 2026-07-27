@@ -53,11 +53,13 @@ skills:
     invocation: user
     adapters:
       - codex
+      - claude
   tool-governance:
     file: skills/tool-governance/SKILL.md
     invocation: user
     adapters:
       - codex
+      - claude
 
 agents:
   rules-reviewer:

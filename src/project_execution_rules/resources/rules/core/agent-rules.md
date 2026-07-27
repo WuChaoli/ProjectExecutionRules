@@ -9,8 +9,9 @@
 - `AGT-002`：角色必须声明职责、输入、输出、停止条件和不负责范围。
 - `AGT-003`：实现者不得担任最终独立审查者。
 - `AGT-004`：并发执行者必须声明文件所有权且不得回退他人修改。
+- Invoke the Catalog-declared `agent-governance` Skill for explicit agent-governance commands。
 
-## 验证要求
+## MUST
 
 - `AGT-005`：Agent 变更必须验证定义语法、权限边界和真实调用结果。
 

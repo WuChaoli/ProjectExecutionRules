@@ -8,8 +8,9 @@
 
 - `OBS-002`：记录可定位失败的上下文，不记录凭据和敏感正文。
 - `OBS-003`：性能结论必须基于测量，不得只凭代码形态推断。
+- Invoke the Catalog-declared `observability` Skill for the task workflow。
 
-## 验证要求
+## MUST
 
 - `OBS-004`：声明可观察前必须验证信号能够产生、关联和读取。
 

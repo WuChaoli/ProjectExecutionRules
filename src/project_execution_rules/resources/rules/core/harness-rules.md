@@ -8,8 +8,9 @@
 
 - `HAR-002`：结构检查只做确定性判断，语义 Review 必须只读。
 - `HAR-003`：Rules 修复与业务功能审计必须保持职责隔离。
+- Invoke the Catalog-declared `rules-reviewer` Skill and Agent for explicit rules-review commands。
 
-## 验证要求
+## MUST
 
 - `HAR-004`：变更后必须重新检查 Catalog、Rule Set、触发器、预算和托管状态。
 

@@ -83,8 +83,34 @@
       },
       "allOf": [
         {
+          "if": {"properties": {"activation": {"const": "always"}}, "required": ["activation"]},
+          "then": {"not": {"anyOf": [
+            {"required": ["paths"]}, {"required": ["tasks"]}, {"required": ["commands"]}
+          ]}}
+        },
+        {
           "if": {"properties": {"activation": {"const": "paths"}}, "required": ["activation"]},
-          "then": {"required": ["paths"], "properties": {"paths": {"minItems": 1}}}
+          "then": {
+            "required": ["paths"],
+            "properties": {"paths": {"minItems": 1}},
+            "not": {"anyOf": [{"required": ["tasks"]}, {"required": ["commands"]}]}
+          }
+        },
+        {
+          "if": {"properties": {"activation": {"const": "task"}}, "required": ["activation"]},
+          "then": {
+            "required": ["tasks"],
+            "properties": {"tasks": {"minItems": 1}},
+            "not": {"anyOf": [{"required": ["paths"]}, {"required": ["commands"]}]}
+          }
+        },
+        {
+          "if": {"properties": {"activation": {"const": "explicit"}}, "required": ["activation"]},
+          "then": {
+            "required": ["commands"],
+            "properties": {"commands": {"minItems": 1}},
+            "not": {"anyOf": [{"required": ["paths"]}, {"required": ["tasks"]}]}
+          }
         }
       ],
       "additionalProperties": false

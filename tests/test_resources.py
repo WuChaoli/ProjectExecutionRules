@@ -20,6 +20,33 @@ def test_builtin_rules_use_stable_contract_sections() -> None:
         assert all(
             section in body for section in ("## WHEN", "## MUST", "## MUST NOT")
         ), definition.domain
+        assert not any(
+            heading in body
+            for heading in ("## 事实来源", "## 执行规则", "## 验证要求", "## 职责边界")
+        ), definition.domain
+
+
+def test_task_and_explicit_rules_describe_dependencies() -> None:
+    catalog = load_builtin_catalog()
+    expected = {
+        "git": ("git",),
+        "pull-request": ("pull-request",),
+        "debug": ("debug",),
+        "observability": ("observability",),
+        "architecture": ("architecture",),
+        "external-services": ("external-services",),
+        "agent": ("agent-governance",),
+        "tool": ("tool-governance",),
+        "harness": ("rules-reviewer",),
+    }
+    for domain, skills in expected.items():
+        definition = catalog.rules[domain]
+        body = resource_root().joinpath("rules", definition.file).read_text(encoding="utf-8")
+        for skill_id in skills:
+            assert skill_id in body, (domain, skill_id)
+        if definition.agents:
+            for agent_id in definition.agents:
+                assert agent_id in body, (domain, agent_id)
 
 
 def test_canonical_resources_exist_at_declared_paths() -> None:

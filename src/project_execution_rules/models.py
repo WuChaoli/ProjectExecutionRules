@@ -110,8 +110,21 @@ class RuleDefinition:
     def __post_init__(self) -> None:
         if not self.domain or "/" in self.domain or "\\" in self.domain:
             raise ValueError("domain must be a simple identifier")
-        if self.activation is ActivationType.PATHS and not self.paths:
-            raise ValueError("paths activation requires paths")
+        fields = (self.paths, self.tasks, self.commands)
+        if self.activation is ActivationType.ALWAYS and any(fields):
+            raise ValueError("always activation cannot declare triggers")
+        if self.activation is ActivationType.PATHS and (
+            not self.paths or self.tasks or self.commands
+        ):
+            raise ValueError("paths activation requires paths and no other triggers")
+        if self.activation is ActivationType.TASK and (
+            not self.tasks or self.paths or self.commands
+        ):
+            raise ValueError("task activation requires tasks and no other triggers")
+        if self.activation is ActivationType.EXPLICIT and (
+            not self.commands or self.paths or self.tasks
+        ):
+            raise ValueError("explicit activation requires commands and no other triggers")
         for pattern in self.paths:
             normalized = pattern.replace("\\", "/")
             path = PurePosixPath(normalized)

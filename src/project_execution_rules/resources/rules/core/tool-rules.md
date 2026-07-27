@@ -8,8 +8,9 @@
 
 - `TOL-002`：工具配置变更需要独立授权，不因能调用而自动拥有配置权。
 - `TOL-003`：长生命周期工具必须有健康检查、失败降级和清理入口。
+- Invoke the Catalog-declared `tool-governance` Skill for explicit tool-governance commands。
 
-## 验证要求
+## MUST
 
 - `TOL-004`：声明工具可用前必须验证发现、调用、失败和恢复路径。
 
