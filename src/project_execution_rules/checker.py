@@ -9,6 +9,7 @@ from project_execution_rules.catalog import (
     load_builtin_catalog,
     validate_catalog_resources,
 )
+from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.frontmatter import parse_frontmatter
 from project_execution_rules.managed import ManagedManifest, sha256_bytes
 from project_execution_rules.models import CheckIssue, CheckReport, ProjectState
@@ -47,7 +48,7 @@ def _managed_user_issues(paths: UserPaths) -> list[CheckIssue]:
         return [_issue("MANAGED_MANIFEST_MISSING", "user resource manifest is missing")]
     try:
         manifest = ManagedManifest.load(manifest_path)
-    except (OSError, ValueError, TypeError, KeyError) as error:
+    except (OSError, ValueError, TypeError, KeyError, ProjectRulesError) as error:
         return [_issue("MANAGED_MANIFEST_INVALID", f"user resource manifest is invalid: {error}")]
     issues: list[CheckIssue] = []
     for entry in manifest.entries:

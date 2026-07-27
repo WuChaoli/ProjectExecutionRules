@@ -26,6 +26,7 @@ from project_execution_rules.lifecycle import (
     apply_lifecycle_plan,
     plan_project_update,
     plan_repair,
+    plan_rollback,
     plan_uninstall,
     plan_update,
     plan_user_uninstall,
@@ -119,6 +120,20 @@ def _selection_summary(
     }
 
 
+def _require_json_confirmation(
+    output_format: OutputFormat,
+    *,
+    yes: bool,
+    dry_run: bool,
+) -> None:
+    if output_format is OutputFormat.JSON and not yes and not dry_run:
+        raise ProjectRulesError(
+            "CONFIRMATION_REQUIRED",
+            "JSON mutation commands require --yes",
+            remediation="Add --yes or use --dry-run.",
+        )
+
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
     """打开交互菜单或执行指定子命令。"""
@@ -147,9 +162,21 @@ def main(ctx: typer.Context) -> None:
     command = commands.get(choice)
     if command is None:
         raise typer.BadParameter(f"未知操作：{choice}")
-    if choice in {"init", "status", "check", "review", "doctor", "update", "repair", "uninstall"}:
+    if choice in {
+        "init",
+        "status",
+        "check",
+        "review",
+        "doctor",
+        "update",
+        "repair",
+        "uninstall",
+    }:
         root = Path(typer.prompt("选择项目目录", default="."))
         ctx.invoke(command, root=root)
+    elif choice == "rollback":
+        transaction_id = typer.prompt("事务 ID")
+        ctx.invoke(command, transaction_id=transaction_id)
     else:
         ctx.invoke(command)
 
@@ -162,6 +189,11 @@ def install(
 ) -> None:
     """安装内置用户级 Rules、Agent 和 Skill。"""
     try:
+        _require_json_confirmation(
+            output_format,
+            yes=yes,
+            dry_run=dry_run,
+        )
         paths = _paths()
         plan = plan_user_install(paths, load_builtin_catalog())
         if dry_run:
@@ -189,6 +221,11 @@ def init_project(
 ) -> None:
     """初始化 Python 项目的 Rules 结构。"""
     try:
+        _require_json_confirmation(
+            output_format,
+            yes=yes,
+            dry_run=dry_run,
+        )
         paths = _paths()
         facts = detect_project(root)
         catalog = load_builtin_catalog()
@@ -204,25 +241,68 @@ def init_project(
             core_domains=core_domains,
             override_domains=("python",) if has_python_difference else (),
         )
-        plan = plan_project_init(root, facts, selection, paths)
+        user_plan = plan_user_install(paths, catalog)
+        project_plan = plan_project_init(
+            root,
+            facts,
+            selection,
+            paths,
+            verify_user_install=False,
+        )
         summary = _selection_summary(catalog, core_domains)
+        user_operation = None
         if dry_run:
             emit(
                 {
                     "selection": summary,
-                    "plan": plan.to_dict(),
+                    "user": user_plan.to_dict(),
+                    "project": project_plan.to_dict(),
                 },
                 output_format,
             )
             return
+        if user_plan.changes:
+            if not yes:
+                emit(
+                    {"selection": summary, "user": user_plan.to_dict()},
+                    output_format,
+                )
+            user_confirmed = confirm_or_cancel(
+                "先安装或更新用户级 Rules 资源？",
+                yes=yes,
+            )
+            user_operation = install_user_resources(
+                user_plan,
+                paths,
+                confirmed=user_confirmed,
+            )
+            if output_format is OutputFormat.HUMAN:
+                emit(user_operation, output_format)
+            if not user_operation.changed:
+                raise ProjectRulesError(
+                    "USER_INSTALL_REQUIRED",
+                    "project initialization requires the user-level installation",
+                )
+        project_plan = plan_project_init(root, facts, selection, paths)
         if not yes:
-            emit({"selection": summary, "plan": plan.to_dict()}, output_format)
+            emit(
+                {"selection": summary, "project": project_plan.to_dict()},
+                output_format,
+            )
         confirmed = confirm_or_cancel("初始化当前项目 Rules？", yes=yes)
-        operation = initialize_project(plan, root, paths, confirmed=confirmed)
+        operation = initialize_project(
+            project_plan,
+            root,
+            paths,
+            confirmed=confirmed,
+        )
         report = check_project(root, paths) if operation.changed else None
         emit(
             {
                 "operation": operation.to_dict(),
+                "user_operation": (
+                    user_operation.to_dict() if user_operation is not None else None
+                ),
                 "check": report.to_dict() if report else None,
             },
             output_format,
@@ -296,6 +376,11 @@ def update(
 ) -> None:
     """更新内置用户级资源。"""
     try:
+        _require_json_confirmation(
+            output_format,
+            yes=yes,
+            dry_run=dry_run,
+        )
         paths = _paths()
         catalog = load_builtin_catalog()
         user_plan = plan_update(paths, catalog)
@@ -318,22 +403,38 @@ def update(
         if not yes:
             emit({"impact": impact}, output_format)
         user_confirmed = confirm_or_cancel("更新用户级 Rules 资源？", yes=yes)
-        emit(
-            install_user_resources(user_plan, paths, confirmed=user_confirmed),
-            output_format,
+        user_report = install_user_resources(
+            user_plan,
+            paths,
+            confirmed=user_confirmed,
         )
+        if output_format is OutputFormat.HUMAN:
+            emit(user_report, output_format)
+        if user_plan.changes and not user_report.changed:
+            raise ProjectRulesError(
+                "USER_UPDATE_REQUIRED",
+                "project update requires the user-level Rules update to complete first",
+            )
+        project_report = None
         if project_plan is not None:
             project_confirmed = confirm_or_cancel(
                 "更新项目 Rule Set 版本？",
                 yes=yes,
             )
+            project_report = apply_lifecycle_plan(
+                project_plan,
+                root,
+                paths,
+                confirmed=project_confirmed,
+            )
+            if output_format is OutputFormat.HUMAN:
+                emit(project_report, output_format)
+        if output_format is OutputFormat.JSON:
             emit(
-                apply_lifecycle_plan(
-                    project_plan,
-                    root,
-                    paths,
-                    confirmed=project_confirmed,
-                ),
+                {
+                    "user": user_report.to_dict(),
+                    "project": project_report.to_dict() if project_report else None,
+                },
                 output_format,
             )
     except ProjectRulesError as error:
@@ -349,6 +450,11 @@ def repair(
 ) -> None:
     """修复 Rules 托管结构，不修改业务代码。"""
     try:
+        _require_json_confirmation(
+            output_format,
+            yes=yes,
+            dry_run=dry_run,
+        )
         paths = _paths()
         user_plan = plan_user_repair(paths, load_builtin_catalog())
         project_plan = plan_repair(root, paths)
@@ -367,7 +473,8 @@ def repair(
             paths,
             confirmed=user_confirmed,
         )
-        emit(user_report, output_format)
+        if output_format is OutputFormat.HUMAN:
+            emit(user_report, output_format)
         if user_plan.changes and not user_report.changed:
             raise ProjectRulesError(
                 "USER_REPAIR_REQUIRED",
@@ -375,15 +482,22 @@ def repair(
             )
         project_plan = plan_repair(root, paths)
         project_confirmed = confirm_or_cancel("修复项目 Rules 结构？", yes=yes)
-        emit(
-            apply_lifecycle_plan(
-                project_plan,
-                root,
-                paths,
-                confirmed=project_confirmed,
-            ),
-            output_format,
+        project_report = apply_lifecycle_plan(
+            project_plan,
+            root,
+            paths,
+            confirmed=project_confirmed,
         )
+        if output_format is OutputFormat.HUMAN:
+            emit(project_report, output_format)
+        else:
+            emit(
+                {
+                    "user": user_report.to_dict(),
+                    "project": project_report.to_dict(),
+                },
+                output_format,
+            )
     except ProjectRulesError as error:
         fail(error, output_format)
 
@@ -391,11 +505,27 @@ def repair(
 @app.command()
 def rollback(
     transaction_id: Annotated[str, typer.Argument(help="事务 ID。")],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    yes: Annotated[bool, typer.Option("--yes")] = False,
     output_format: FormatOption = OutputFormat.HUMAN,
 ) -> None:
     """恢复未完成事务。"""
     try:
-        rollback_transaction(_paths(), transaction_id)
+        _require_json_confirmation(
+            output_format,
+            yes=yes,
+            dry_run=dry_run,
+        )
+        paths = _paths()
+        plan = plan_rollback(paths, transaction_id)
+        if dry_run:
+            emit(plan, output_format)
+            return
+        confirmed = confirm_or_cancel("恢复此事务？", yes=yes)
+        if not confirmed:
+            emit({"rolled_back": None}, output_format)
+            return
+        rollback_transaction(paths, transaction_id)
         emit({"rolled_back": transaction_id}, output_format)
     except ProjectRulesError as error:
         fail(error, output_format)
@@ -411,6 +541,11 @@ def uninstall(
 ) -> None:
     """移除托管 Rules 资源并保留 Override。"""
     try:
+        _require_json_confirmation(
+            output_format,
+            yes=yes,
+            dry_run=dry_run,
+        )
         paths = _paths()
         project_plan = plan_uninstall(root, paths, include_user=False)
         user_plan = plan_user_uninstall(paths) if include_user else None
@@ -424,24 +559,31 @@ def uninstall(
             )
             return
         project_confirmed = confirm_or_cancel("移除项目 Rules 资源？", yes=yes)
-        emit(
-            apply_lifecycle_plan(
-                project_plan,
-                root,
-                paths,
-                confirmed=project_confirmed,
-            ),
-            output_format,
+        project_report = apply_lifecycle_plan(
+            project_plan,
+            root,
+            paths,
+            confirmed=project_confirmed,
         )
+        if output_format is OutputFormat.HUMAN:
+            emit(project_report, output_format)
+        user_report = None
         if user_plan is not None:
             user_confirmed = confirm_or_cancel("移除用户级 Rules 资源？", yes=yes)
+            user_report = apply_lifecycle_plan(
+                user_plan,
+                paths.home,
+                paths,
+                confirmed=user_confirmed,
+            )
+            if output_format is OutputFormat.HUMAN:
+                emit(user_report, output_format)
+        if output_format is OutputFormat.JSON:
             emit(
-                apply_lifecycle_plan(
-                    user_plan,
-                    paths.home,
-                    paths,
-                    confirmed=user_confirmed,
-                ),
+                {
+                    "project": project_report.to_dict(),
+                    "user": user_report.to_dict() if user_report else None,
+                },
                 output_format,
             )
     except ProjectRulesError as error:

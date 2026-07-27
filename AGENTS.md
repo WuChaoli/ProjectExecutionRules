@@ -21,6 +21,8 @@
 ## 最小导航
 
 - 产品边界和使用方式见 `README.md`。
+- 跨模块关系、事务数据流和常见任务入口见 `docs/CODEMAPS.md`。
+- Python 包内部导航见 `src/project_execution_rules/AGENTS.md`。
 - 设计见 `docs/superpowers/specs/2026-07-27-project-execution-rules-design.md`。
 - 实施与验收见
   `docs/superpowers/plans/2026-07-27-project-execution-rules-implementation.md`。

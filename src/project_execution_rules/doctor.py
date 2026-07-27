@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.managed import ManagedManifest, sha256_bytes
 from project_execution_rules.models import CheckIssue, CheckReport, ProjectState
 from project_execution_rules.paths import UserPaths
@@ -112,7 +113,7 @@ def run_doctor(
                             ),
                         )
                     )
-        except (OSError, ValueError, TypeError, KeyError) as error:
+        except (OSError, ValueError, TypeError, KeyError, ProjectRulesError) as error:
             issues.append(
                 CheckIssue(
                     code="MANAGED_MANIFEST_INVALID",

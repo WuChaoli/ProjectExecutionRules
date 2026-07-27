@@ -65,6 +65,11 @@ project-rules init --root . --dry-run
 project-rules init --root .
 ```
 
+`init` 会先展示用户级与项目级两个独立计划；用户级资源尚未安装时，会先单独授权
+并完成用户级事务，再授权项目事务。交互模式可选择 Core Rules；自动化可使用
+`--core security,testing,git`。`--dry-run --format json` 会同时返回选择结果、Trigger
+以及两个事务计划。
+
 初始化会创建或更新：
 
 ```text
@@ -87,8 +92,8 @@ project-rules check --root .
 project-rules check --root . --format json
 ```
 
-检查内容包括 Rule Set、链接、Rule ID、Trigger、AGENTS 路由、Override 跟踪、
-内容预算和版本兼容性。
+检查内容包括 Rule Set、链接、托管资源 checksum、Rule ID、Trigger、AGENTS
+路由、Override 跟踪、内容预算和版本兼容性。
 
 只读语义审查：
 
@@ -99,13 +104,20 @@ project-rules review --root .
 Reviewer 使用临时、只读 Codex 会话，只允许审查 AGENTS、Rules、Catalog 和相关
 Agent/Skill 定义；它不能审计业务代码、运行项目命令或修改文件。
 
+显式治理入口会绑定到随包安装的 Codex 资源：
+
+- `$agent-governance`；
+- `$tool-governance`；
+- `rules-reviewer` Agent/Skill，以及 `project-rules review`。
+
 ## 生命周期
 
 ```powershell
 project-rules status --root .
 project-rules update --dry-run
 project-rules repair --root . --dry-run
-project-rules rollback <transaction-id>
+project-rules rollback <transaction-id> --dry-run
+project-rules rollback <transaction-id> --yes
 project-rules uninstall --root . --dry-run
 ```
 
@@ -116,6 +128,7 @@ inspect -> plan -> preview -> authorize -> backup -> apply -> verify
 ```
 
 验证失败时自动恢复。恢复失败会保留事务证据并停止后续写入。
+手动 rollback 同样会复验文件内容或链接身份，只有复验成功才清理备份。
 
 本机事务状态位于：
 
@@ -143,6 +156,8 @@ project-rules install --dry-run --format json
 - `2`：`check` 或 `doctor` 完成但发现问题。
 
 JSON 错误固定包含 `code`、`message`、`evidence` 和 `remediation`。
+JSON 模式下的修改命令必须显式传入 `--yes`，因此每个命令只输出一个 JSON
+对象；使用 `--dry-run` 时不需要 `--yes`。
 
 ## 安全边界
 

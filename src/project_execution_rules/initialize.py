@@ -36,6 +36,8 @@ def plan_project_init(
     facts: ProjectFacts,
     selection: ProjectSelection,
     paths: UserPaths,
+    *,
+    verify_user_install: bool = True,
 ) -> ChangePlan:
     from project_execution_rules.rendering import (
         render_agents,
@@ -59,7 +61,7 @@ def plan_project_init(
     for domain in domains:
         if domain not in catalog.rules:
             raise ProjectRulesError("RULE_UNKNOWN", f"unknown Rule domain: {domain}")
-        if not (paths.rules_home / f"{domain}-rules.md").is_file():
+        if verify_user_install and not (paths.rules_home / f"{domain}-rules.md").is_file():
             raise ProjectRulesError(
                 "USER_RULE_MISSING",
                 f"user Rule is not installed: {domain}",

@@ -15,6 +15,7 @@ from project_execution_rules.lifecycle import (
     apply_lifecycle_plan,
     plan_project_update,
     plan_repair,
+    plan_rollback,
     plan_uninstall,
     plan_update,
     plan_user_uninstall,
@@ -310,3 +311,33 @@ def test_rollback_preserves_evidence_when_restore_verification_fails(
 
     assert transaction_home.exists()
     assert backup_home.exists()
+
+
+def test_rollback_dry_run_plan_uses_manifest_targets(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    paths = _paths(tmp_path)
+    transaction_home = paths.transactions_home / "deadbeef"
+    transaction_home.mkdir(parents=True)
+    (transaction_home / "manifest.json").write_text(
+        json.dumps(
+            {
+                "authorized_root": str(root),
+                "originals": [
+                    {
+                        "target": "AGENTS.md",
+                        "kind": "missing",
+                        "backup": "",
+                        "link_target": "",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    plan = plan_rollback(paths, "deadbeef")
+
+    assert plan.scope == "rollback"
+    assert plan.changes[0].action == "remove"
+    assert plan.changes[0].target == root / "AGENTS.md"

@@ -464,3 +464,34 @@ def rollback_transaction(paths: UserPaths, transaction_id: str) -> None:
         if path.exists():
             path.resolve().relative_to(paths.state_home.resolve())
             shutil.rmtree(path)
+
+
+def plan_rollback(paths: UserPaths, transaction_id: str) -> ChangePlan:
+    if not transaction_id or any(
+        character not in "0123456789abcdef" for character in transaction_id
+    ):
+        raise ProjectRulesError(
+            "TRANSACTION_ID_INVALID",
+            f"transaction ID is invalid: {transaction_id}",
+        )
+    manifest_path = paths.transactions_home / transaction_id / "manifest.json"
+    if not manifest_path.is_file():
+        raise ProjectRulesError(
+            "TRANSACTION_MISSING",
+            f"transaction does not exist: {transaction_id}",
+        )
+    raw = as_mapping(
+        cast(object, json.loads(manifest_path.read_text(encoding="utf-8"))),
+        name="transaction manifest",
+    )
+    authorized_root = Path(as_string(raw["authorized_root"], name="authorized_root")).resolve()
+    originals = as_object_tuple(raw.get("originals", ()), name="transaction originals")
+    changes: list[Change] = []
+    for original_value in originals:
+        original = as_mapping(original_value, name="transaction original")
+        logical = Path(as_string(original["target"], name="original target"))
+        target = resolve_target_within_root(authorized_root / logical, authorized_root)
+        kind = as_string(original["kind"], name="original kind")
+        action = "remove" if kind == "missing" else f"restore-{kind}"
+        changes.append(Change(action=action, target=target))
+    return ChangePlan(scope="rollback", changes=tuple(changes))

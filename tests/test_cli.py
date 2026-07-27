@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -74,6 +75,94 @@ def test_install_dry_run_json_does_not_write(tmp_path: Path) -> None:
     assert not (home / ".agents" / "rules").exists()
 
 
+def test_json_mutation_requires_yes_and_returns_one_error_object(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["install", "--format", "json"],
+        env={
+            "USERPROFILE": str(tmp_path / "home"),
+            "LOCALAPPDATA": str(tmp_path / "local"),
+        },
+    )
+
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "CONFIRMATION_REQUIRED"
+
+
+def test_corrupt_managed_manifest_returns_stable_json_error(tmp_path: Path) -> None:
+    local = tmp_path / "local"
+    manifest = local / "ProjectExecutionRules" / "managed-user.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{broken", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["install", "--dry-run", "--format", "json"],
+        env={
+            "USERPROFILE": str(tmp_path / "home"),
+            "LOCALAPPDATA": str(local),
+        },
+    )
+
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "MANAGED_MANIFEST_INVALID"
+
+
+def test_update_stops_when_user_level_update_is_declined(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    local = tmp_path / "local"
+    environment = {
+        "USERPROFILE": str(home),
+        "LOCALAPPDATA": str(local),
+    }
+    installed = runner.invoke(
+        app,
+        ["install", "--yes", "--format", "json"],
+        env=environment,
+    )
+    assert installed.exit_code == 0
+    security = home / ".agents" / "rules" / "security-rules.md"
+    old_content = b"OLD SECURITY RULE\n"
+    security.write_bytes(old_content)
+    manifest = local / "ProjectExecutionRules" / "managed-user.json"
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    for entry in manifest_payload["entries"]:
+        if entry["logical_path"] == ".agents/rules/security-rules.md":
+            entry["sha256"] = hashlib.sha256(old_content).hexdigest()
+    manifest_payload["resource_version"] = "0.9.0"
+    manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
+    root = tmp_path / "project"
+    rules = root / ".rules"
+    rules.mkdir(parents=True)
+    ruleset = rules / "ruleset.yaml"
+    ruleset.write_text(
+        """schema_version: 1
+rules_version: 0.9.0
+adapter: codex
+profile: python
+domains:
+  core:
+    - security
+  profile:
+    - python
+overrides: []
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["update", "--root", str(root)],
+        input="n\n",
+        env=environment,
+    )
+
+    assert result.exit_code != 0
+    assert "rules_version: 0.9.0" in ruleset.read_text(encoding="utf-8")
+
+
 def test_init_json_returns_stable_error_for_non_git_project(tmp_path: Path) -> None:
     root = tmp_path / "project"
     root.mkdir()
@@ -126,5 +215,7 @@ def test_init_dry_run_reports_selected_triggers(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     routes = {item["domain"]: item for item in payload["selection"]["rules"]}
+    assert payload["user"]["scope"] == "user"
+    assert payload["project"]["scope"] == "project"
     assert routes["security"]["activation"] == "always"
     assert routes["git"]["tasks"] == ["branch", "commit", "merge", "worktree"]
