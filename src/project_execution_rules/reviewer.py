@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 import tempfile
 import uuid
 from collections.abc import Callable
@@ -14,8 +13,9 @@ from pathlib import Path
 import jsonschema
 
 from project_execution_rules.catalog import resource_root
-from project_execution_rules.doctor import CommandResult
+from project_execution_rules.commands import CommandResult, run_command
 from project_execution_rules.errors import ProjectRulesError
+from project_execution_rules.managed import sha256_bytes
 from project_execution_rules.paths import UserPaths
 
 ReviewRunner = Callable[[tuple[str, ...], str, Path], CommandResult]
@@ -35,14 +35,7 @@ def _default_runner(
     prompt: str,
     output_path: Path,
 ) -> CommandResult:
-    result = subprocess.run(
-        command,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return CommandResult(result.returncode, result.stdout, result.stderr)
+    return run_command(command, input_text=prompt)
 
 
 def review_rules(
@@ -56,6 +49,8 @@ def review_rules(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prompt = """只读审查隔离目录中的 Rules 治理层。
 只允许读取 project/AGENTS.md、project/.rules/、user/rules/ 和 codex/ 中的治理资源。
+review-context.json 与 user/managed-user.json 是 CLI 从原项目链接和托管 manifest
+生成的确定性证据；必须复算复制文件的 SHA-256 后再判断来源链和完整性。
 检查完整性、清晰度、重复、矛盾、Trigger、预算、路由和 Override 语义。
 不得审计业务代码，不得运行项目测试、构建或外部服务，不得修改任何文件。
 最终只输出符合指定 JSON Schema 的对象。
@@ -67,6 +62,7 @@ def review_rules(
         project_copy = review_root / "project"
         rules_copy = project_copy / ".rules"
         rules_copy.mkdir(parents=True)
+        base_links: list[dict[str, object]] = []
         agents = root.resolve() / "AGENTS.md"
         if agents.is_file() and not agents.is_symlink():
             shutil.copy2(agents, project_copy / "AGENTS.md")
@@ -83,6 +79,15 @@ def review_rules(
                             f"Rule link escapes the managed Rule home: {source}",
                         ) from error
                     shutil.copy2(resolved_source, rules_copy / source.name)
+                    relative_target = resolved_source.relative_to(paths.rules_home.resolve())
+                    base_links.append(
+                        {
+                            "project_path": f"project/.rules/{source.name}",
+                            "target": f"user/rules/{relative_target.as_posix()}",
+                            "sha256": sha256_bytes(resolved_source.read_bytes()),
+                            "link_verified": True,
+                        }
+                    )
                 elif source.is_file():
                     shutil.copy2(source, rules_copy / source.name)
         for source, target in (
@@ -109,6 +114,32 @@ def review_rules(
             elif source.is_file() and not source.is_symlink():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
+        manifest_source = paths.state_home / "managed-user.json"
+        if manifest_source.is_file() and not manifest_source.is_symlink():
+            manifest_target = review_root / "user" / "managed-user.json"
+            manifest_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(manifest_source, manifest_target)
+        catalog_source = paths.rules_home / "catalog.yaml"
+        context = {
+            "schema_version": 1,
+            "catalog": {
+                "logical_path": "user/rules/catalog.yaml",
+                "sha256": (
+                    sha256_bytes(catalog_source.read_bytes())
+                    if catalog_source.is_file() and not catalog_source.is_symlink()
+                    else None
+                ),
+            },
+            "managed_manifest": {
+                "logical_path": "user/managed-user.json",
+                "present": manifest_source.is_file() and not manifest_source.is_symlink(),
+            },
+            "base_links": base_links,
+        }
+        (review_root / "review-context.json").write_text(
+            json.dumps(context, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         command = (
             "codex",
             "exec",

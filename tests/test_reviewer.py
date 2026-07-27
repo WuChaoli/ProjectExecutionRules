@@ -33,6 +33,10 @@ def test_reviewer_invokes_ephemeral_read_only_codex(tmp_path: Path) -> None:
         review_root = Path(command[command.index("--cd") + 1])
         assert (review_root / "project" / "AGENTS.md").is_file()
         assert (review_root / "project" / ".rules" / "ruleset.yaml").is_file()
+        context = json.loads((review_root / "review-context.json").read_text(encoding="utf-8"))
+        assert context["schema_version"] == 1
+        assert context["catalog"]["logical_path"] == "user/rules/catalog.yaml"
+        assert isinstance(context["base_links"], list)
         assert not (review_root / "business.py").exists()
         assert review_root != root.resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,6 +56,7 @@ def test_reviewer_invokes_ephemeral_read_only_codex(tmp_path: Path) -> None:
         "read-only",
     )
     assert "不得审计业务代码" in prompt
+    assert "review-context.json" in prompt
 
 
 def test_reviewer_rejects_invalid_structured_output(tmp_path: Path) -> None:

@@ -19,3 +19,10 @@ def test_task_and_explicit_rules_are_not_path_scoped() -> None:
     assert catalog.rules["git"].paths == ()
     assert catalog.rules["harness"].activation is ActivationType.EXPLICIT
     assert catalog.rules["harness"].paths == ()
+
+
+def test_pull_request_review_trigger_is_namespaced() -> None:
+    tasks = load_builtin_catalog().rules["pull-request"].tasks
+
+    assert "pull-request-review" in tasks
+    assert "review" not in tasks

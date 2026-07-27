@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 
+import yaml
+
 from project_execution_rules.catalog import resource_root
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.managed import ManagedManifest, sha256_bytes
@@ -15,6 +17,7 @@ from project_execution_rules.models import (
 )
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.transactions import FileTransaction
+from project_execution_rules.yaml_utils import as_mapping, load_mapping
 
 
 def _managed_hashes(paths: UserPaths) -> dict[str, str]:
@@ -43,7 +46,12 @@ def _resource_changes(paths: UserPaths, catalog: RuleCatalog) -> list[Change]:
             Change(
                 action="write",
                 target=paths.rules_home / "catalog.yaml",
-                content=root.joinpath("catalog.yaml").read_bytes(),
+                content=_installed_catalog_content(catalog),
+            ),
+            Change(
+                action="write",
+                target=paths.rules_home / "review-report.schema.json",
+                content=root.joinpath("schemas/review-report.schema.json").read_bytes(),
             ),
             Change(
                 action="write",
@@ -66,6 +74,20 @@ def _resource_changes(paths: UserPaths, catalog: RuleCatalog) -> list[Change]:
             )
         )
     return changes
+
+
+def _installed_catalog_content(catalog: RuleCatalog) -> bytes:
+    raw = load_mapping(
+        resource_root().joinpath("catalog.yaml").read_text(encoding="utf-8"),
+        name="Catalog",
+    )
+    rules = as_mapping(raw["rules"], name="Catalog rules")
+    for domain in catalog.rules:
+        rule = as_mapping(rules[domain], name=f"Catalog rule {domain}")
+        rule["file"] = f"{domain}-rules.md"
+        rules[domain] = rule
+    raw["rules"] = rules
+    return yaml.safe_dump(raw, allow_unicode=True, sort_keys=False).encode()
 
 
 def _plan_user_resources(

@@ -38,7 +38,7 @@ rules:
     activation: task
     tasks:
       - pull-request
-      - review
+      - pull-request-review
     core: true
   ci-cd:
     file: core/ci-cd-rules.md

@@ -4,22 +4,14 @@ import os
 import platform
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
+from project_execution_rules.commands import CommandResult
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.managed import ManagedManifest, sha256_bytes
 from project_execution_rules.models import CheckIssue, CheckReport, ProjectState
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.yaml_utils import load_mapping
-
-
-@dataclass(frozen=True, slots=True)
-class CommandResult:
-    returncode: int
-    stdout: str
-    stderr: str
-
 
 CommandRunner = Callable[[tuple[str, ...]], CommandResult]
 

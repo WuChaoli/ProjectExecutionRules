@@ -20,4 +20,5 @@ paths:
 
 ## 职责边界
 
-自动加载的 Agent 路由由 Agent Rules 管理。
+Rule、Profile 和 Trigger 由 Catalog 管理；AGENTS 路由是由 Catalog 生成并检查的
+Codex 适配视图。Agent Rules 只管理 Agent/Subagent 角色和协作边界。

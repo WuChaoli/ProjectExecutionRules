@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 from typing import Annotated
 
@@ -9,8 +8,9 @@ import typer
 
 from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.checker import check_project
+from project_execution_rules.commands import CommandResult, run_command
 from project_execution_rules.detection import detect_project
-from project_execution_rules.doctor import CommandResult, run_doctor
+from project_execution_rules.doctor import run_doctor
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.initialize import (
     ProjectSelection,
@@ -61,13 +61,7 @@ def _paths() -> UserPaths:
 
 
 def _runner(command: tuple[str, ...]) -> CommandResult:
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return CommandResult(result.returncode, result.stdout, result.stderr)
+    return run_command(command)
 
 
 def _select_core_domains(

@@ -10,6 +10,7 @@
 | 文件 | 职责 | 关键入口 |
 |---|---|---|
 | `cli.py` | 交互和非交互命令编排 | `app` |
+| `commands.py` | 跨平台解析并执行外部 CLI | `run_command` |
 | `models.py` | 不可变领域模型和状态 | `ChangePlan`、`CheckReport` |
 | `catalog.py` | 加载并校验内置 Rule Catalog | `load_builtin_catalog` |
 | `detection.py` | 静态探测 Git/Python 项目事实 | `detect_project` |

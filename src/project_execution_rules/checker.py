@@ -15,10 +15,17 @@ from project_execution_rules.managed import ManagedManifest, sha256_bytes
 from project_execution_rules.models import CheckIssue, CheckReport, ProjectState
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.rendering import route_row
-from project_execution_rules.yaml_utils import as_mapping, as_string_tuple, load_mapping
+from project_execution_rules.yaml_utils import (
+    as_mapping,
+    as_object_tuple,
+    as_string,
+    as_string_tuple,
+    load_mapping,
+)
 
 LinkVerifier = Callable[[Path, Path], bool]
 _OVERRIDE_ID = re.compile(r"`([A-Z][A-Z0-9]*-OVR-\d{3})`")
+_BASE_ID = re.compile(r"`([A-Z][A-Z0-9]*-\d{3})`")
 
 
 def _actual_link_verifier(link: Path, target: Path) -> bool:
@@ -79,6 +86,54 @@ def _managed_user_issues(paths: UserPaths) -> list[CheckIssue]:
     return issues
 
 
+def _override_operation_issue(
+    metadata: dict[str, object],
+    body: str,
+    *,
+    domain: str,
+    valid_base_ids: set[str],
+    override_paths: set[str],
+) -> CheckIssue | None:
+    try:
+        if metadata.get("override_schema") != 1:
+            raise ValueError("override_schema must be 1")
+        raw_operations = as_object_tuple(
+            metadata["operations"],
+            name=f"{domain} Override operations",
+        )
+        if not raw_operations:
+            raise ValueError("operations must not be empty")
+        declared_ids: set[str] = set()
+        for raw_operation in raw_operations:
+            operation = as_mapping(raw_operation, name=f"{domain} Override operation")
+            rule_id = as_string(operation["id"], name="Override operation id")
+            kind = as_string(operation["operation"], name="Override operation type")
+            target = as_string(operation["target"], name="Override operation target")
+            if not re.fullmatch(r"[A-Z][A-Z0-9]*-OVR-\d{3}", rule_id):
+                raise ValueError(f"invalid Override operation id: {rule_id}")
+            if rule_id in declared_ids:
+                raise ValueError(f"duplicate Override operation id: {rule_id}")
+            declared_ids.add(rule_id)
+            if kind == "add_constraint":
+                if target not in valid_base_ids:
+                    raise ValueError(f"unknown Base Rule target: {target}")
+            elif kind == "narrow_paths":
+                if target != domain or not override_paths:
+                    raise ValueError("narrow_paths must target its domain and declare paths")
+            else:
+                raise ValueError(f"unsupported Override operation: {kind}")
+        body_ids = set(_OVERRIDE_ID.findall(body))
+        if body_ids != declared_ids:
+            raise ValueError("Override operation IDs must exactly match body Rule IDs")
+    except (KeyError, TypeError, ValueError) as error:
+        return _issue(
+            "OVERRIDE_OPERATION_INVALID",
+            f"Override operations are invalid: {domain}",
+            error=str(error),
+        )
+    return None
+
+
 def check_project(
     root: Path,
     paths: UserPaths,
@@ -133,12 +188,15 @@ def check_project(
             state=ProjectState.INCOMPATIBLE,
             issues=(_issue("RULESET_INVALID", str(error)),),
         )
+    loaded_rule_bytes = 0
     for domain in domains:
         if domain not in catalog.rules:
             issues.append(_issue("RULE_UNKNOWN", f"unknown Rule domain: {domain}"))
             continue
         link = resolved / ".rules" / f"{domain}-rules.md"
         target = paths.rules_home / f"{domain}-rules.md"
+        if link.is_file():
+            loaded_rule_bytes += len(link.read_bytes())
         if not link_verifier(link, target):
             issues.append(
                 _issue(
@@ -185,6 +243,7 @@ def check_project(
         if relative not in tracked:
             issues.append(_issue("OVERRIDE_UNTRACKED", f"Override is not tracked by Git: {domain}"))
         text = override.read_text(encoding="utf-8")
+        loaded_rule_bytes += len(text.encode("utf-8"))
         if len(text.encode("utf-8")) > 4096:
             issues.append(_issue("OVERRIDE_BUDGET_EXCEEDED", f"Override exceeds 4 KiB: {domain}"))
         try:
@@ -209,12 +268,33 @@ def check_project(
                     f"Override expands the Base trigger: {domain}",
                 )
             )
+        base = paths.rules_home / f"{domain}-rules.md"
+        valid_base_ids: set[str] = (
+            set(_BASE_ID.findall(base.read_text(encoding="utf-8"))) if base.is_file() else set()
+        )
+        operation_issue = _override_operation_issue(
+            metadata,
+            body,
+            domain=domain,
+            valid_base_ids=valid_base_ids,
+            override_paths=override_paths,
+        )
+        if operation_issue is not None:
+            issues.append(operation_issue)
         for rule_id in _OVERRIDE_ID.findall(body):
             if rule_id in seen_override_ids:
                 issues.append(
                     _issue("RULE_ID_DUPLICATE", f"Override Rule ID is duplicated: {rule_id}")
                 )
             seen_override_ids.add(rule_id)
+    if loaded_rule_bytes > 24 * 1024:
+        issues.append(
+            _issue(
+                "LOADED_RULES_BUDGET_EXCEEDED",
+                "selected Base and Override Rules exceed the 24 KiB cumulative budget",
+                bytes=loaded_rule_bytes,
+            )
+        )
     version_state = (
         ProjectState.UPDATE_AVAILABLE
         if str(raw.get("rules_version")) != catalog.rules_version

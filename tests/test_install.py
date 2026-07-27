@@ -12,6 +12,7 @@ from project_execution_rules.install import (
     plan_user_repair,
 )
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.yaml_utils import as_mapping, as_string, load_mapping
 
 
 def _paths(tmp_path: Path) -> UserPaths:
@@ -32,6 +33,7 @@ def test_user_install_plan_contains_rules_agent_and_skill(tmp_path: Path) -> Non
     assert paths.codex_skills / "rules-reviewer" / "SKILL.md" in targets
     assert paths.codex_skills / "agent-governance" / "SKILL.md" in targets
     assert paths.codex_skills / "tool-governance" / "SKILL.md" in targets
+    assert paths.rules_home / "review-report.schema.json" in targets
     assert not any(target.exists() for target in targets)
 
 
@@ -44,6 +46,22 @@ def test_install_creates_canonical_resources_and_manifest(tmp_path: Path) -> Non
     assert report.changed
     assert (paths.rules_home / "python-rules.md").is_file()
     assert (paths.state_home / "managed-user.json").is_file()
+
+
+def test_installed_catalog_references_installed_rule_files(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    catalog = load_builtin_catalog()
+    install_user_resources(plan_user_install(paths, catalog), paths, confirmed=True)
+    installed_catalog = load_mapping(
+        (paths.rules_home / "catalog.yaml").read_text(encoding="utf-8"),
+        name="Installed Catalog",
+    )
+    installed_rules = as_mapping(installed_catalog["rules"], name="Installed Catalog rules")
+
+    for domain, raw_rule in installed_rules.items():
+        rule = as_mapping(raw_rule, name=f"Installed Catalog rule {domain}")
+        relative_file = as_string(rule["file"], name=f"Installed Catalog file {domain}")
+        assert (paths.rules_home / relative_file).is_file()
 
 
 def test_install_refuses_non_managed_conflict(tmp_path: Path) -> None:

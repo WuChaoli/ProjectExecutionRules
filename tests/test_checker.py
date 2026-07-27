@@ -147,6 +147,50 @@ def test_check_reports_invalid_override_frontmatter(tmp_path: Path) -> None:
     assert "OVERRIDE_FRONTMATTER_INVALID" in {issue.code for issue in report.issues}
 
 
+def test_check_reports_invalid_override_operation(tmp_path: Path) -> None:
+    root, paths, tracked = _healthy_project(tmp_path)
+    override = root / ".rules" / "python-rules.override.md"
+    override.write_text(
+        """---
+override_schema: 1
+operations:
+  - id: PY-OVR-001
+    operation: replace
+    target: PY-001
+---
+
+# Python Rule Overrides
+
+- `PY-OVR-001`：替换 Base。
+""",
+        encoding="utf-8",
+    )
+
+    report = check_project(
+        root,
+        paths,
+        tracked_files=tracked,
+        link_verifier=_fake_link_verifier,
+    )
+
+    assert "OVERRIDE_OPERATION_INVALID" in {issue.code for issue in report.issues}
+
+
+def test_check_reports_loaded_rules_budget_overflow(tmp_path: Path) -> None:
+    root, paths, tracked = _healthy_project(tmp_path)
+    for base in (root / ".rules").glob("*-rules.md"):
+        base.write_text("x" * 9000, encoding="utf-8")
+
+    report = check_project(
+        root,
+        paths,
+        tracked_files=tracked,
+        link_verifier=lambda link, target: True,
+    )
+
+    assert "LOADED_RULES_BUDGET_EXCEEDED" in {issue.code for issue in report.issues}
+
+
 def test_check_reports_drifted_managed_user_rule(tmp_path: Path) -> None:
     root, paths, tracked = _healthy_project(tmp_path)
     (paths.rules_home / "security-rules.md").write_text("tampered\n", encoding="utf-8")
@@ -188,5 +232,6 @@ def test_agents_routes_explicit_commands_to_real_codex_entries() -> None:
 
     assert "`agent-governance` -> Codex Skill `$agent-governance`" in agents
     assert (
-        "`rules-review` -> Codex Agent/Skill `rules-reviewer`，CLI `project-rules review`"
+        "`rules-review` -> 首选 CLI `project-rules review`；Codex Agent/Skill "
+        "`rules-reviewer` 是同一 Schema 的交互适配器"
     ) in agents

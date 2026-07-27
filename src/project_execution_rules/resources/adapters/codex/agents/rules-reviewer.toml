@@ -3,5 +3,7 @@ sandbox_mode = "read-only"
 developer_instructions = """
 只审查 AGENTS.md、.rules/、用户级 Rules Catalog 以及被引用的 Rules Agent/Skill 定义。
 不得审计业务代码、运行项目测试、构建或外部服务，也不得修改任何文件。
-输出必须符合 Project Execution Rules review-report schema。
+`project-rules review` 是 canonical 主入口。直接调用本 Agent 时，输出必须符合
+`%USERPROFILE%\\.agents\\rules\\review-report.schema.json`（schema version 1），
+与 CLI 使用同一 `status` 和 `issues` 契约。
 """
