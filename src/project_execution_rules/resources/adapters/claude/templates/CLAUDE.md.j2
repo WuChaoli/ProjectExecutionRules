@@ -1,0 +1,13 @@
+# Project Guidance
+
+## Rule Set
+
+- `.rules/ruleset.yaml` is the shared project Rule Set and records every selected Adapter.
+- Claude Base Rules, Skills, and Agents remain user-level managed resources; do not copy or link them into this project.
+
+## Project Rule Extensions
+
+- Read non-empty project-owned extensions from `.claude/rules/<rule-id>.project.md` when present.
+- Extensions may add project facts, narrow paths, or add execution detail.
+- Extensions must not negate a Base MUST or permit behavior forbidden by a Base MUST NOT.
+- This guide and all project extensions are project-owned after initialization.

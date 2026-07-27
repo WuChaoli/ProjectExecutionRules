@@ -4,8 +4,11 @@ from pathlib import Path
 
 import pytest
 
+from project_execution_rules.adapters import get_adapter
+from project_execution_rules.adapters.claude import ClaudeAdapter
+from project_execution_rules.adapters.codex import CodexAdapter
 from project_execution_rules.catalog import load_builtin_catalog
-from project_execution_rules.detection import detect_project
+from project_execution_rules.detection import ProjectFacts, detect_project
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.frontmatter import parse_frontmatter
 from project_execution_rules.initialize import (
@@ -14,9 +17,10 @@ from project_execution_rules.initialize import (
     plan_project_init,
 )
 from project_execution_rules.install import install_user_resources, plan_user_install
-from project_execution_rules.models import AdapterId, ChangePlan
+from project_execution_rules.models import AdapterId, Change, ChangePlan
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.rulesets import load_ruleset_text
+from project_execution_rules.selection import resolve_catalog_selection
 from project_execution_rules.yaml_utils import as_mapping, as_object_tuple
 
 
@@ -31,6 +35,24 @@ def _installed_paths(tmp_path: Path) -> UserPaths:
         paths,
         confirmed=True,
     )
+    return paths
+
+
+def _install_adapters(
+    tmp_path: Path,
+    adapters: tuple[AdapterId, ...],
+) -> UserPaths:
+    paths = UserPaths.from_environment(
+        {"LOCALAPPDATA": str(tmp_path / "local")},
+        tmp_path / "home",
+    )
+    catalog = load_builtin_catalog()
+    for adapter in adapters:
+        selection = resolve_catalog_selection(catalog, catalog.rules, adapter=adapter)
+        plan = get_adapter(adapter).plan_install(paths, catalog, selection)
+        for change in plan.changes:
+            change.target.parent.mkdir(parents=True, exist_ok=True)
+            change.target.write_bytes(change.content)
     return paths
 
 
@@ -226,6 +248,163 @@ def test_dry_run_planning_still_requires_supported_profile(tmp_path: Path) -> No
             paths,
             verify_user_install=False,
         )
+
+
+def test_init_composes_adapters_with_one_shared_ruleset(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nrequires-python = ">=3.11"\n',
+        encoding="utf-8",
+    )
+    paths = _install_adapters(tmp_path, (AdapterId.CODEX, AdapterId.CLAUDE))
+
+    plan = plan_project_init(
+        root,
+        detect_project(root),
+        ProjectSelection(
+            core_domains=("security",),
+            override_domains=("python",),
+            adapters=(AdapterId.CODEX, AdapterId.CLAUDE),
+        ),
+        paths,
+    )
+
+    ruleset_changes = [
+        change for change in plan.changes if change.target == root / ".rules" / "ruleset.yaml"
+    ]
+    assert len(ruleset_changes) == 1
+    ruleset = load_ruleset_text(ruleset_changes[0].content.decode())
+    assert ruleset.adapters == (AdapterId.CODEX, AdapterId.CLAUDE)
+    assert ruleset.overrides == {
+        AdapterId.CODEX: ("python",),
+        AdapterId.CLAUDE: ("python",),
+    }
+    targets = {change.target for change in plan.changes}
+    assert root / "AGENTS.md" in targets
+    assert root / ".claude" / "CLAUDE.md" in targets
+    assert root / ".claude" / "rules" / "python.project.md" in targets
+
+
+def _codex_collision_plan(
+    self: CodexAdapter,
+    root: Path,
+    facts: ProjectFacts,
+    selection: ProjectSelection,
+    paths: UserPaths,
+    *,
+    verify_user_install: bool = True,
+) -> ChangePlan:
+    del self, facts, selection, paths, verify_user_install
+    return ChangePlan(
+        scope="project:codex",
+        changes=(Change("write", root / "collision.md", b"codex"),),
+    )
+
+
+def _claude_collision_plan(
+    self: ClaudeAdapter,
+    root: Path,
+    facts: ProjectFacts,
+    selection: ProjectSelection,
+    paths: UserPaths,
+    *,
+    verify_user_install: bool = True,
+) -> ChangePlan:
+    del self, facts, selection, paths, verify_user_install
+    return ChangePlan(
+        scope="project:claude",
+        changes=(Change("write", root / "collision.md", b"claude"),),
+    )
+
+
+def test_init_rejects_cross_adapter_target_collisions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    paths = _install_adapters(tmp_path, (AdapterId.CODEX, AdapterId.CLAUDE))
+    codex = get_adapter(AdapterId.CODEX)
+    claude = get_adapter(AdapterId.CLAUDE)
+    monkeypatch.setattr(type(codex), "plan_project_init", _codex_collision_plan)
+    monkeypatch.setattr(type(claude), "plan_project_init", _claude_collision_plan)
+
+    with pytest.raises(ProjectRulesError) as caught:
+        plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(
+                core_domains=("security",),
+                adapters=(AdapterId.CODEX, AdapterId.CLAUDE),
+            ),
+            paths,
+        )
+
+    assert caught.value.code == "ADAPTER_PROJECT_COLLISION"
+
+
+def test_claude_only_init_does_not_probe_symlink_capability(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nrequires-python = ">=3.11"\n',
+        encoding="utf-8",
+    )
+    paths = _install_adapters(tmp_path, (AdapterId.CLAUDE,))
+    plan = plan_project_init(
+        root,
+        detect_project(root),
+        ProjectSelection(
+            core_domains=("security",),
+            override_domains=("python",),
+            adapters=(AdapterId.CLAUDE,),
+        ),
+        paths,
+    )
+    staged: list[tuple[Path, ...]] = []
+
+    report = initialize_project(
+        plan,
+        root,
+        paths,
+        confirmed=True,
+        symlink_probe=lambda: pytest.fail("Claude-only init must not probe symlinks"),
+        stage_files=lambda files: staged.append(files),
+    )
+
+    assert report.changed
+    assert staged == [
+        (
+            root / ".claude" / "CLAUDE.md",
+            root / ".claude" / "rules" / "python.project.md",
+            root / ".rules" / "ruleset.yaml",
+        )
+    ]
+    assert not (root / ".claude" / "skills").exists()
+    assert not (root / ".claude" / "agents").exists()
+
+
+def test_init_does_not_implicitly_install_missing_adapter(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    paths = UserPaths.from_environment({}, tmp_path / "home")
+
+    with pytest.raises(ProjectRulesError) as caught:
+        plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(
+                core_domains=("security",),
+                adapters=(AdapterId.CLAUDE,),
+            ),
+            paths,
+        )
+
+    assert caught.value.code == "USER_ADAPTER_NOT_INSTALLED"
+    assert not paths.manifest_path(AdapterId.CLAUDE).exists()
 
 
 def test_initialize_empty_plan_does_not_probe_or_stage(tmp_path: Path) -> None:

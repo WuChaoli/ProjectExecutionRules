@@ -143,7 +143,9 @@ def test_codex_adapter_preview_skips_only_installed_resource_check(tmp_path: Pat
         verify_user_install=False,
     )
 
-    assert wrapper_plan.changes == adapter_plan.changes
+    wrapper_targets = {change.target for change in wrapper_plan.changes}
+    assert {change.target for change in adapter_plan.changes} <= wrapper_targets
+    assert root / ".rules" / "ruleset.yaml" in wrapper_targets
 
 
 def test_codex_adapter_plans_base_links_and_guide(tmp_path: Path) -> None:

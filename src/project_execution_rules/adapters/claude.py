@@ -65,7 +65,54 @@ class ClaudeAdapter:
         *,
         verify_user_install: bool = True,
     ) -> ChangePlan:
-        return ChangePlan(scope="project:claude", changes=())
+        from project_execution_rules.initialize import (
+            project_change_required,
+            validate_user_install,
+        )
+        from project_execution_rules.rendering import render_python_project_extension
+
+        resolved = root.resolve()
+        if not facts.is_git:
+            raise ProjectRulesError(
+                "GIT_REPOSITORY_MISSING",
+                "project initialization requires a Git repository",
+            )
+        if facts.profile != "python":
+            raise ProjectRulesError(
+                "PROFILE_UNSUPPORTED",
+                "the first release supports Python projects only",
+            )
+        if verify_user_install:
+            validate_user_install(self.id, selection, paths)
+        changes: list[Change] = []
+        guide = resolved / ".claude" / "CLAUDE.md"
+        if not guide.exists() and not guide.is_symlink():
+            changes.append(
+                Change(
+                    action="write",
+                    target=guide,
+                    content=_templates().get_template("CLAUDE.md.j2").render().encode(),
+                )
+            )
+        for domain in selection.override_domains:
+            if domain != "python":
+                raise ProjectRulesError(
+                    "OVERRIDE_UNSUPPORTED",
+                    f"no real Claude Project Rule Extension renderer exists for {domain}",
+                )
+            content = render_python_project_extension(facts)
+            if content:
+                changes.append(
+                    Change(
+                        action="write",
+                        target=resolved / ".claude" / "rules" / f"{domain}.project.md",
+                        content=content.encode(),
+                    )
+                )
+        return ChangePlan(
+            scope="project:claude",
+            changes=tuple(change for change in changes if project_change_required(change)),
+        )
 
     def _resource_changes(
         self,

@@ -119,11 +119,6 @@ class CodexAdapter:
             (
                 Change(
                     action="write",
-                    target=rules_dir / "ruleset.yaml",
-                    content=render_project_ruleset(selection, catalog).encode(),
-                ),
-                Change(
-                    action="write",
                     target=resolved / "AGENTS.md",
                     content=render_agents(selection).encode(),
                 ),
@@ -246,10 +241,7 @@ def project_ruleset(
         profile="python",
         core_domains=selection.core_domains,
         profile_domains=selected_catalog.profiles["python"],
-        overrides={
-            adapter: selection.override_domains if adapter is AdapterId.CODEX else ()
-            for adapter in adapters
-        },
+        overrides={adapter: selection.override_domains for adapter in adapters},
     )
 
 

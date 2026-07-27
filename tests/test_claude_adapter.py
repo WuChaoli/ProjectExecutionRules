@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -8,8 +9,10 @@ import pytest
 
 from project_execution_rules.adapters import get_adapter
 from project_execution_rules.catalog import load_builtin_catalog, resource_root
+from project_execution_rules.detection import detect_project
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.frontmatter import parse_frontmatter
+from project_execution_rules.initialize import ProjectSelection
 from project_execution_rules.managed import ManagedManifest
 from project_execution_rules.models import AdapterId, ChangePlan
 from project_execution_rules.paths import UserPaths
@@ -259,6 +262,127 @@ def test_claude_install_reports_stable_missing_resource_error(
     assert caught.value.code == error_code
     assert resource_id in caught.value.message
     assert str(staged_root.joinpath(relative)) in caught.value.evidence["path"]
+
+
+def test_claude_project_init_creates_guide_and_only_non_empty_extensions(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "src").mkdir()
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "sample"\nrequires-python = ">=3.11"\n',
+        encoding="utf-8",
+    )
+    (root / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    paths = _paths(tmp_path)
+    catalog = load_builtin_catalog()
+    selection = resolve_catalog_selection(
+        catalog,
+        catalog.rules,
+        adapter=AdapterId.CLAUDE,
+    )
+    install_plan = get_adapter(AdapterId.CLAUDE).plan_install(paths, catalog, selection)
+    for change in install_plan.changes:
+        change.target.parent.mkdir(parents=True, exist_ok=True)
+        change.target.write_bytes(change.content)
+
+    plan = get_adapter(AdapterId.CLAUDE).plan_project_init(
+        root,
+        detect_project(root),
+        ProjectSelection(
+            core_domains=("security", "testing"),
+            override_domains=("python",),
+        ),
+        paths,
+    )
+
+    targets = {change.target for change in plan.changes}
+    assert root / ".claude" / "CLAUDE.md" in targets
+    assert root / ".claude" / "rules" / "python.project.md" in targets
+    assert root / ".claude" / "rules" / "testing.project.md" not in targets
+    assert all(change.action == "write" for change in plan.changes)
+    assert not any("skills" in change.target.parts for change in plan.changes)
+    assert not any("agents" in change.target.parts for change in plan.changes)
+    assert not any(change.link_target is not None for change in plan.changes)
+    guide = _content(plan, root / ".claude" / "CLAUDE.md")
+    assert "Project Rule Extensions" in guide
+    assert ".rules/ruleset.yaml" in guide
+
+
+def test_claude_project_init_preserves_existing_guide(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    guide = root / ".claude" / "CLAUDE.md"
+    guide.parent.mkdir(parents=True)
+    guide.write_text("project-owned\n", encoding="utf-8")
+    paths = _paths(tmp_path)
+
+    plan = get_adapter(AdapterId.CLAUDE).plan_project_init(
+        root,
+        detect_project(root),
+        ProjectSelection(core_domains=("security",)),
+        paths,
+        verify_user_install=False,
+    )
+
+    assert guide not in {change.target for change in plan.changes}
+    assert guide.read_text(encoding="utf-8") == "project-owned\n"
+
+
+def test_claude_project_init_requires_matching_manifest_closure(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    paths = _paths(tmp_path)
+
+    with pytest.raises(ProjectRulesError) as caught:
+        get_adapter(AdapterId.CLAUDE).plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(core_domains=("security",)),
+            paths,
+        )
+
+    assert caught.value.code == "USER_ADAPTER_NOT_INSTALLED"
+
+
+def test_claude_project_init_rejects_manifest_missing_selected_entry(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    paths = _paths(tmp_path)
+    catalog = load_builtin_catalog()
+    selection = resolve_catalog_selection(
+        catalog,
+        catalog.rules,
+        adapter=AdapterId.CLAUDE,
+    )
+    install_plan = get_adapter(AdapterId.CLAUDE).plan_install(paths, catalog, selection)
+    for change in install_plan.changes:
+        change.target.parent.mkdir(parents=True, exist_ok=True)
+        change.target.write_bytes(change.content)
+    manifest_path = paths.manifest_path(AdapterId.CLAUDE)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["entries"] = [
+        entry
+        for entry in manifest["entries"]
+        if entry["logical_path"] != "rules/security.md"
+    ]
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ProjectRulesError) as caught:
+        get_adapter(AdapterId.CLAUDE).plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(core_domains=("security",)),
+            paths,
+        )
+
+    assert caught.value.code == "USER_ADAPTER_CLOSURE_MISMATCH"
 
 
 def test_claude_install_refuses_non_managed_conflict(tmp_path: Path) -> None:

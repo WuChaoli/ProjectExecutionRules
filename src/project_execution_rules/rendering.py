@@ -96,6 +96,20 @@ def render_ruleset(
     return render_project_ruleset(selection, adapters=adapters)
 
 
+def render_python_project_extension(facts: ProjectFacts) -> str:
+    lines = ["# Python Project Rule Extensions", ""]
+    if facts.python_requirement:
+        lines.append(
+            f"- 项目 Python 版本要求为 `{facts.python_requirement}`；不得降低 Base Rule 要求。"
+        )
+    if facts.package_manager != "unknown":
+        lines.append(f"- 项目依赖与命令使用 `{facts.package_manager}`。")
+    if facts.source_dirs:
+        joined = "、".join(f"`{item}/`" for item in facts.source_dirs)
+        lines.append(f"- 项目源码入口为 {joined}。")
+    return "\n".join(lines).rstrip() + "\n" if len(lines) > 2 else ""
+
+
 def render_python_override(facts: ProjectFacts) -> str:
     lines = ["# Python Rule Overrides", ""]
     operations: list[dict[str, str]] = []
