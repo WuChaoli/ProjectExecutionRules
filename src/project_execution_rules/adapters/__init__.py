@@ -42,6 +42,8 @@ class _PlaceholderAdapter:
         facts: ProjectFacts,
         selection: ProjectSelection,
         paths: UserPaths,
+        *,
+        verify_user_install: bool = True,
     ) -> ChangePlan:
         return ChangePlan(scope=f"project:{self.id.value}", changes=())
 

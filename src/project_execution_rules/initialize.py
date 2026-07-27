@@ -6,7 +6,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.detection import ProjectFacts
 from project_execution_rules.doctor import probe_symlink_capability
 from project_execution_rules.errors import ProjectRulesError
@@ -58,11 +57,7 @@ def plan_project_init(
     verify_user_install: bool = True,
     adapters: tuple[AdapterId, ...] = (AdapterId.CODEX,),
 ) -> ChangePlan:
-    from project_execution_rules.rendering import (
-        render_agents,
-        render_python_override,
-        render_ruleset,
-    )
+    from project_execution_rules.adapters import get_adapter
 
     if adapters != (AdapterId.CODEX,):
         raise ProjectRulesError(
@@ -79,74 +74,14 @@ def plan_project_init(
             "PROFILE_UNSUPPORTED",
             "the first release supports Python projects only",
         )
-    if verify_user_install:
-        from project_execution_rules.adapters import get_adapter
-
-        adapter_plan = get_adapter(AdapterId.CODEX).plan_project_init(
-            root,
-            facts,
-            selection,
-            paths,
-        )
-        return ChangePlan(scope="project", changes=adapter_plan.changes)
-
-    # 旧 orchestration 的 dry-run 会同时展示待安装用户资源和项目计划，因此只在
-    # 该预览路径临时跳过 Base 存在性检查，不改变 Adapter 的正式 init 契约。
-    catalog = load_builtin_catalog()
-    domains = selection.core_domains + catalog.profiles["python"]
-    for domain in domains:
-        if domain not in catalog.rules:
-            raise ProjectRulesError("RULE_UNKNOWN", f"unknown Rule domain: {domain}")
-    rules_dir = root.resolve() / ".rules"
-    changes = [
-        Change(
-            action="symlink",
-            target=rules_dir / f"{domain}-rules.md",
-            link_target=paths.rules_home / f"{domain}-rules.md",
-        )
-        for domain in domains
-    ]
-    for domain in selection.override_domains:
-        if domain != "python":
-            raise ProjectRulesError(
-                "OVERRIDE_UNSUPPORTED",
-                f"no real project override renderer exists for {domain}",
-            )
-        changes.append(
-            Change(
-                action="write",
-                target=rules_dir / "python-rules.override.md",
-                content=render_python_override(facts).encode(),
-            )
-        )
-    changes.extend(
-        (
-            Change(
-                action="write",
-                target=rules_dir / "ruleset.yaml",
-                content=render_ruleset(selection, adapters=adapters).encode(),
-            ),
-            Change(
-                action="write",
-                target=root.resolve() / "AGENTS.md",
-                content=render_agents(selection).encode(),
-            ),
-            Change(
-                action="write",
-                target=root.resolve() / ".gitignore",
-                content=append_codex_ignore(
-                    (root.resolve() / ".gitignore").read_text(encoding="utf-8")
-                    if (root.resolve() / ".gitignore").is_file()
-                    else "",
-                    domains,
-                ).encode(),
-            ),
-        )
+    adapter_plan = get_adapter(AdapterId.CODEX).plan_project_init(
+        root,
+        facts,
+        selection,
+        paths,
+        verify_user_install=verify_user_install,
     )
-    return ChangePlan(
-        scope="project",
-        changes=tuple(change for change in changes if project_change_required(change)),
-    )
+    return ChangePlan(scope="project", changes=adapter_plan.changes)
 
 
 def _default_stage(root: Path, files: tuple[Path, ...]) -> None:

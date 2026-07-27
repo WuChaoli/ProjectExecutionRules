@@ -44,6 +44,8 @@ class Adapter(Protocol):
         facts: ProjectFacts,
         selection: ProjectSelection,
         paths: UserPaths,
+        *,
+        verify_user_install: bool = True,
     ) -> ChangePlan: ...
 
 

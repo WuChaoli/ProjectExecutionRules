@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from project_execution_rules.adapters import (
     get_adapter,
@@ -10,7 +14,8 @@ from project_execution_rules.adapters import (
 from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.commands import CommandResult
 from project_execution_rules.detection import detect_project
-from project_execution_rules.initialize import ProjectSelection
+from project_execution_rules.errors import ProjectRulesError
+from project_execution_rules.initialize import ProjectSelection, plan_project_init
 from project_execution_rules.models import AdapterId
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.selection import resolve_catalog_selection
@@ -50,10 +55,95 @@ def test_codex_adapter_plans_real_install_targets(tmp_path: Path) -> None:
     plan = get_adapter(AdapterId.CODEX).plan_install(paths, catalog, selection)
 
     targets = {change.target for change in plan.changes}
+    manifest_change = next(
+        change
+        for change in plan.changes
+        if change.target == paths.manifest_path(AdapterId.CODEX)
+    )
+    manifest = json.loads(manifest_change.content)
+    entries = manifest["entries"]
+    skill_entries = {
+        Path(entry["logical_path"]).parent.name
+        for entry in entries
+        if entry["kind"] == "skill"
+    }
+    agent_entries = {
+        Path(entry["logical_path"]).stem
+        for entry in entries
+        if entry["kind"] == "agent"
+    }
+
     assert plan.scope == "user:codex"
     assert paths.rules_home / "security-rules.md" in targets
     assert paths.codex_agents / "rules-reviewer.toml" in targets
     assert paths.manifest_path(AdapterId.CODEX) in targets
+    assert skill_entries == set(manifest["selection"]["skills"])
+    assert agent_entries == set(manifest["selection"]["agents"])
+    assert all(
+        paths.codex_skills / skill_id / "SKILL.md" in targets
+        for skill_id in selection.skills
+    )
+    assert all(
+        paths.codex_agents / f"{agent_id}.toml" in targets
+        for agent_id in selection.agents
+    )
+
+
+def test_codex_adapter_rejects_missing_skill_resource(tmp_path: Path) -> None:
+    catalog = load_builtin_catalog()
+    missing = replace(catalog.skills["git"], file="skills/missing/SKILL.md")
+    catalog.skills["git"] = missing
+    selection = resolve_catalog_selection(catalog, ("git",), adapter=AdapterId.CODEX)
+    paths = UserPaths.from_environment({}, tmp_path / "home")
+
+    with pytest.raises(ProjectRulesError, match="Skill resource is missing"):
+        get_adapter(AdapterId.CODEX).plan_install(paths, catalog, selection)
+
+
+def test_codex_adapter_rejects_missing_agent_resource(tmp_path: Path) -> None:
+    catalog = load_builtin_catalog()
+    catalog.agents["missing-agent"] = replace(
+        catalog.agents["rules-reviewer"],
+        agent_id="missing-agent",
+        file="agents/missing.md",
+    )
+    catalog.rules["pull-request"] = replace(
+        catalog.rules["pull-request"],
+        agents=("missing-agent",),
+    )
+    selection = resolve_catalog_selection(
+        catalog,
+        ("pull-request",),
+        adapter=AdapterId.CODEX,
+    )
+    paths = UserPaths.from_environment({}, tmp_path / "home")
+
+    with pytest.raises(ProjectRulesError, match="Agent resource is missing"):
+        get_adapter(AdapterId.CODEX).plan_install(paths, catalog, selection)
+
+
+def test_codex_adapter_preview_skips_only_installed_resource_check(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    paths = UserPaths.from_environment({}, tmp_path / "home")
+
+    adapter_plan = get_adapter(AdapterId.CODEX).plan_project_init(
+        root,
+        detect_project(root),
+        ProjectSelection(core_domains=("security",)),
+        paths,
+        verify_user_install=False,
+    )
+    wrapper_plan = plan_project_init(
+        root,
+        detect_project(root),
+        ProjectSelection(core_domains=("security",)),
+        paths,
+        verify_user_install=False,
+    )
+
+    assert wrapper_plan.changes == adapter_plan.changes
 
 
 def test_codex_adapter_plans_base_links_and_guide(tmp_path: Path) -> None:

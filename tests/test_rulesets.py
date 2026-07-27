@@ -83,6 +83,24 @@ def test_ruleset_rejects_unknown_domain_membership() -> None:
         load_ruleset_text(text)
 
 
+def test_ruleset_rejects_profile_rule_in_core_domains() -> None:
+    text = _VALID_RULESET.replace("    - security", "    - python", 1).replace(
+        "  profile:\n    - python", "  profile: []"
+    )
+
+    with pytest.raises(ProjectRulesError, match="domains.core"):
+        load_ruleset_text(text)
+
+
+def test_ruleset_rejects_core_rule_in_profile_domains() -> None:
+    text = _VALID_RULESET.replace("  core:\n    - security", "  core: []").replace(
+        "  profile:\n    - python", "  profile:\n    - security"
+    ).replace("    - python\n  claude", "    - security\n  claude")
+
+    with pytest.raises(ProjectRulesError, match="domains.profile"):
+        load_ruleset_text(text)
+
+
 def test_ruleset_rejects_unknown_and_host_path_fields() -> None:
     with pytest.raises(ProjectRulesError, match="unknown keys"):
         load_ruleset_text(_VALID_RULESET + "home: C:/Users/example\n")

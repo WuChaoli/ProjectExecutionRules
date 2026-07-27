@@ -109,6 +109,8 @@ class CodexAdapter:
         facts: ProjectFacts,
         selection: ProjectSelection,
         paths: UserPaths,
+        *,
+        verify_user_install: bool = True,
     ) -> ChangePlan:
         from project_execution_rules.initialize import (
             append_codex_ignore,
@@ -135,7 +137,9 @@ class CodexAdapter:
         for domain in domains:
             if domain not in catalog.rules:
                 raise ProjectRulesError("RULE_UNKNOWN", f"unknown Rule domain: {domain}")
-            if not (paths.rules_home / f"{domain}-rules.md").is_file():
+            if verify_user_install and not (
+                paths.rules_home / f"{domain}-rules.md"
+            ).is_file():
                 raise ProjectRulesError(
                     "USER_RULE_MISSING",
                     f"user Rule is not installed: {domain}",
@@ -228,23 +232,39 @@ class CodexAdapter:
             )
         )
         for agent_id in selection.agents:
+            source = root.joinpath(f"adapters/codex/agents/{agent_id}.toml")
+            if not source.is_file():
+                canonical = root.joinpath(catalog.agents[agent_id].file)
+                if not canonical.is_file():
+                    raise ProjectRulesError(
+                        "AGENT_RESOURCE_MISSING",
+                        f"Agent resource is missing: {agent_id}",
+                    )
+                source = canonical
             changes.append(
                 Change(
                     action="write",
                     target=paths.codex_agents / f"{agent_id}.toml",
-                    content=root.joinpath(f"adapters/codex/agents/{agent_id}.toml").read_bytes(),
+                    content=source.read_bytes(),
                 )
             )
         for skill_id in selection.skills:
             source = root.joinpath(f"adapters/codex/skills/{skill_id}/SKILL.md")
-            if source.is_file():
-                changes.append(
-                    Change(
-                        action="write",
-                        target=paths.codex_skills / skill_id / "SKILL.md",
-                        content=source.read_bytes(),
+            if not source.is_file():
+                canonical = root.joinpath(catalog.skills[skill_id].file)
+                if not canonical.is_file():
+                    raise ProjectRulesError(
+                        "SKILL_RESOURCE_MISSING",
+                        f"Skill resource is missing: {skill_id}",
                     )
+                source = canonical
+            changes.append(
+                Change(
+                    action="write",
+                    target=paths.codex_skills / skill_id / "SKILL.md",
+                    content=source.read_bytes(),
                 )
+            )
         return tuple(changes)
 
     @staticmethod

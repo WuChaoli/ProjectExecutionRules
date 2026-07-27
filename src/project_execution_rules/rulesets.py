@@ -99,6 +99,14 @@ def load_ruleset_text(text: str) -> RuleSet:
         raise _invalid(f"unknown Rule domain: {', '.join(sorted(unknown_domains))}")
     if profile not in catalog.profiles:
         raise _invalid(f"unknown profile: {profile}")
+    core_rule_ids = {
+        domain for domain, definition in catalog.rules.items() if definition.core
+    }
+    if not set(core_domains) <= core_rule_ids:
+        raise _invalid("domains.core must contain only Catalog core Rules")
+    profile_rule_ids = set(catalog.profiles[profile])
+    if not set(profile_domains) <= profile_rule_ids:
+        raise _invalid(f"domains.profile must contain only Profile {profile} Rules")
     overrides: dict[AdapterId, tuple[str, ...]] = {}
     try:
         for adapter in adapters:
