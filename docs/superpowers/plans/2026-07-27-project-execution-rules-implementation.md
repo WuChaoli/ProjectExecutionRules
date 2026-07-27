@@ -38,7 +38,7 @@
 - Produces: `ActivationType`、`RuleDefinition`、`RuleCatalog`、`RuleSet`、`CheckIssue`、`CheckReport`、`ProjectState`、`OutputFormat`。
 - Produces: `ProjectRulesError(code, message, evidence, remediation, exit_code)`。
 
-- [ ] **Step 1: Write failing model tests**
+- [x] **Step 1: Write failing model tests**
 
 ```python
 def test_rule_definition_rejects_parent_path():
@@ -56,17 +56,17 @@ def test_check_report_serializes_stable_json():
     assert report.to_dict() == {"state": "healthy", "issues": []}
 ```
 
-- [ ] **Step 2: Run the model tests and confirm they fail**
+- [x] **Step 2: Run the model tests and confirm they fail**
 
 Run: `uv run pytest tests/test_models.py -q`
 
 Expected: collection fails because `project_execution_rules.models` does not exist.
 
-- [ ] **Step 3: Create package metadata and immutable dataclasses**
+- [x] **Step 3: Create package metadata and immutable dataclasses**
 
 Use Python 3.11, expose `project-rules = "project_execution_rules.cli:app"`, include package data, and implement enum-backed frozen dataclasses with explicit `to_dict()` methods. Error JSON fields are always `code`、`message`、`evidence`、`remediation`。
 
-- [ ] **Step 4: Run model tests and static gates**
+- [x] **Step 4: Run model tests and static gates**
 
 Run:
 
@@ -78,7 +78,7 @@ uv run ruff check src tests
 
 Expected: tests and Ruff pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add -- pyproject.toml uv.lock src tests/test_models.py
@@ -103,7 +103,7 @@ git commit -m "构建：建立CLI包与领域模型"
 - Produces: `parse_frontmatter(text: str) -> tuple[dict[str, object], str]`。
 - Produces: `validate_catalog_resources(catalog: RuleCatalog) -> tuple[CheckIssue, ...]`。
 
-- [ ] **Step 1: Write failing Catalog tests**
+- [x] **Step 1: Write failing Catalog tests**
 
 ```python
 def test_builtin_catalog_contains_core_and_python_profile():
@@ -117,21 +117,21 @@ def test_python_paths_match_frontmatter():
     assert not report
 ```
 
-- [ ] **Step 2: Run tests and confirm missing implementations**
+- [x] **Step 2: Run tests and confirm missing implementations**
 
 Run: `uv run pytest tests/test_catalog.py tests/test_resources.py -q`
 
 Expected: import failure for Catalog functions.
 
-- [ ] **Step 3: Implement Catalog parsing and resources**
+- [x] **Step 3: Implement Catalog parsing and resources**
 
 Catalog contains thirteen Core domains and Python Profile. Each Rule uses stable IDs and the body sections `事实来源`、`执行规则`、`验证要求`、`职责边界`。Python Rule frontmatter covers `**/*.py`、`pyproject.toml` and supported lock files. Task/explicit Rules do not contain empty `paths`。
 
-- [ ] **Step 4: Validate IDs, triggers, frontmatter and budgets**
+- [x] **Step 4: Validate IDs, triggers, frontmatter and budgets**
 
 Reject duplicate IDs, unsupported prefixes, absolute paths, parent traversal, empty path sets, Catalog/frontmatter drift, Base files above 8 KiB and startup Rule total above 24 KiB.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -142,7 +142,7 @@ uv run ruff check src tests
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add -- src/project_execution_rules/catalog.py src/project_execution_rules/frontmatter.py src/project_execution_rules/resources tests/test_catalog.py tests/test_resources.py
@@ -163,7 +163,7 @@ git commit -m "规则：内置Core与Python规则目录"
 - Produces: `ManagedManifest.load/save`，记录 logical path、resource version、SHA-256，不记录凭据或文件正文。
 - Produces: `FileTransaction.plan_write()`、`plan_symlink()`、`plan_remove()`、`apply()`、`restore()`、`cleanup()`。
 
-- [ ] **Step 1: Write failing Windows path and rollback tests**
+- [x] **Step 1: Write failing Windows path and rollback tests**
 
 ```python
 def test_user_paths_use_local_app_data(tmp_path):
@@ -184,19 +184,19 @@ def test_failed_verification_restores_original(tmp_path):
     assert target.read_text(encoding="utf-8") == "original"
 ```
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `uv run pytest tests/test_paths.py tests/test_transactions.py -q`
 
-- [ ] **Step 3: Implement explicit-path transaction engine**
+- [x] **Step 3: Implement explicit-path transaction engine**
 
 Every target is resolved and checked against the exact authorized root before mutation. Recursive deletion is not used. Backups are content-addressed inside `%LOCALAPPDATA%\ProjectExecutionRules\backups\<transaction-id>`，manifest uses relative logical paths。
 
-- [ ] **Step 4: Add failure tests**
+- [x] **Step 4: Add failure tests**
 
 Cover non-managed conflict, target outside root, symlink target mismatch, interrupted transaction, successful restore, failed restore preserving backup and cleanup refusing unverified state.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run: `uv run pytest tests/test_paths.py tests/test_transactions.py -q`
 
@@ -220,19 +220,19 @@ git commit -m "基础设施：实现受控文件事务"
 - Produces: `install_user_resources(plan, confirm) -> OperationReport`。
 - Produces: `run_doctor(root, paths, command_runner) -> CheckReport`。
 
-- [ ] **Step 1: Write failing install/doctor tests**
+- [x] **Step 1: Write failing install/doctor tests**
 
 Verify dry-run has no writes, install creates canonical Rules and managed manifest, non-managed conflicts stop, doctor reports missing Codex/Git and does not run pytest/build commands.
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `uv run pytest tests/test_install.py tests/test_doctor.py -q`
 
-- [ ] **Step 3: Implement installation and non-destructive probes**
+- [x] **Step 3: Implement installation and non-destructive probes**
 
 Doctor may run `codex --version`、`git --version` and a temporary symlink probe. It must never run commands extracted from Markdown or project quality commands. `.codex/config.toml` is inspected only for existence and reported as advisory; its contents are not rewritten.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `uv run pytest tests/test_install.py tests/test_doctor.py -q`
 
@@ -257,23 +257,23 @@ git commit -m "功能：安装Codex规则资源并诊断环境"
 - Produces: `plan_project_init(root, facts, selection, user_paths) -> ChangePlan`。
 - Produces: `initialize_project(plan, confirm) -> OperationReport`。
 
-- [ ] **Step 1: Write failing detection/init tests**
+- [x] **Step 1: Write failing detection/init tests**
 
 Create fixtures for `pyproject.toml` with uv、Poetry and generic projects. Verify recommended Python Profile, discovered lock files, minimal AGENTS routing, exact base links, no empty Override, exact `.gitignore` entries and tracked `ruleset.yaml`。
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `uv run pytest tests/test_detection.py tests/test_initialize.py -q`
 
-- [ ] **Step 3: Implement fact detection without executing project commands**
+- [x] **Step 3: Implement fact detection without executing project commands**
 
 Read only project metadata, filenames, Git metadata and CI paths. Do not read `.env` or logs. `pyproject.toml` is parsed with `tomllib`。
 
-- [ ] **Step 4: Implement deterministic rendering**
+- [x] **Step 4: Implement deterministic rendering**
 
 AGENTS contains source-of-truth, safety kernel, Base then Override loading order, task routes and minimal navigation. Project initialization requires Git and verified user installation; Base is symlinked, Override is created only for selected real differences.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run: `uv run pytest tests/test_detection.py tests/test_initialize.py -q`
 
@@ -297,23 +297,23 @@ git commit -m "功能：初始化Python项目规则集"
 - Produces: `get_project_status(root, paths) -> StatusReport`。
 - Produces: `review_rules(root, paths, runner) -> ReviewReport`。
 
-- [ ] **Step 1: Write failing fixture tests**
+- [x] **Step 1: Write failing fixture tests**
 
 Cover healthy、missing link、wrong target、untracked Override、duplicate ID、Catalog/frontmatter drift、budget overflow、route gap、update available and incompatible schema。
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `uv run pytest tests/test_checker.py tests/test_reviewer.py -q`
 
-- [ ] **Step 3: Implement deterministic checker and status**
+- [x] **Step 3: Implement deterministic checker and status**
 
 Checker only reads Rules infrastructure and Git index. It must not inspect business implementation for compliance and must not run project commands.
 
-- [ ] **Step 4: Implement read-only Codex reviewer**
+- [x] **Step 4: Implement read-only Codex reviewer**
 
 Invoke Codex with a task brief that limits reads to AGENTS、Rule Set、Base、Override、Catalog and referenced Agent/Skill definitions. Require structured JSON matching `review-report.schema.json`。Reject invalid output and never apply reviewer suggestions.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run: `uv run pytest tests/test_checker.py tests/test_reviewer.py -q`
 
@@ -332,19 +332,19 @@ git commit -m "功能：检查并审查项目规则"
 - Produces: `plan_update()`、`plan_repair()`、`rollback_transaction()`、`plan_uninstall()`。
 - All mutating functions consume `ChangePlan` and `Confirmation`, and return `OperationReport`。
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 Verify update dry-run reports changed/deprecated IDs and Override impact, repair fixes only managed structure, rollback rejects ambiguous targets, uninstall preserves Overrides and non-managed files.
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `uv run pytest tests/test_lifecycle.py -q`
 
-- [ ] **Step 3: Implement lifecycle operations on transaction engine**
+- [x] **Step 3: Implement lifecycle operations on transaction engine**
 
 Update user and project resources in separate transactions. Repair refuses semantic conflicts. Uninstall removes exact managed links and manifests but preserves `*.override.md` unless the user explicitly names an exact override target.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `uv run pytest tests/test_lifecycle.py -q`
 
@@ -364,19 +364,19 @@ git commit -m "功能：完成规则资源生命周期管理"
 - Consumes: Tasks 4–7 command services.
 - Produces: Typer `app` with `install/init/status/check/review/doctor/update/repair/rollback/uninstall`。
 
-- [ ] **Step 1: Write failing CliRunner tests**
+- [x] **Step 1: Write failing CliRunner tests**
 
 Verify no-argument menu, interactive confirmations, `--dry-run`, `--yes`, `--format json`, non-interactive missing arguments, stable exit codes and error JSON.
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `uv run pytest tests/test_cli.py -q`
 
-- [ ] **Step 3: Implement interactive-first presentation**
+- [x] **Step 3: Implement interactive-first presentation**
 
 No-argument invocation displays current root and menu. Mutations always show grouped user/project plans before confirmation. JSON mode writes only JSON to stdout; human diagnostics go to stderr. Cancellation exits without writes.
 
-- [ ] **Step 4: Run tests and manual help smoke**
+- [x] **Step 4: Run tests and manual help smoke**
 
 Run:
 
@@ -386,7 +386,7 @@ uv run project-rules --help
 uv run project-rules check --help
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add -- src/project_execution_rules/cli.py src/project_execution_rules/presentation.py tests/test_cli.py
@@ -407,19 +407,19 @@ git commit -m "功能：提供交互式规则管理CLI"
 **Interfaces:**
 - Produces: a buildable wheel and documented local Windows workflow.
 
-- [ ] **Step 1: Write isolated end-to-end test**
+- [x] **Step 1: Write isolated end-to-end test**
 
 The test creates temporary HOME/LOCALAPPDATA and a temporary Git Python project, then executes install、init、check、status、update dry-run、repair dry-run and uninstall while asserting no project quality command was invoked.
 
-- [ ] **Step 2: Run and confirm missing workflow support**
+- [x] **Step 2: Run and confirm missing workflow support**
 
 Run: `uv run pytest tests/integration/test_windows_workflow.py -q`
 
-- [ ] **Step 3: Add user and contributor documentation**
+- [x] **Step 3: Add user and contributor documentation**
 
 README includes uv tool installation, interactive and JSON examples, Windows Developer Mode prerequisite, managed paths, non-goals, recovery and uninstall behavior. AGENTS routes Python/testing/documentation/Git tasks without duplicating the product Rules.
 
-- [ ] **Step 4: Run the complete verification matrix**
+- [x] **Step 4: Run the complete verification matrix**
 
 Run:
 
@@ -435,7 +435,7 @@ git diff --check
 
 Expected: all commands exit 0; all tests pass; wheel and sdist are built.
 
-- [ ] **Step 5: Inspect built artifacts and secret boundaries**
+- [x] **Step 5: Inspect built artifacts and secret boundaries**
 
 Run:
 
@@ -447,7 +447,7 @@ git ls-files | rg "(\\.env$|\\.pem$|\\.key$|pid|log$)"
 
 Expected: bundled Catalog exists, only intentional files are tracked, secret/runtime scan has no matches.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add -- README.md AGENTS.md .gitignore pyproject.toml tests/integration tests/fixtures
@@ -463,15 +463,15 @@ git commit -m "文档：完成首版使用说明与验收"
 - Consumes: complete implementation and verification evidence.
 - Produces: checked plan, reviewer findings closure and clean repository.
 
-- [ ] **Step 1: Run an independent review**
+- [x] **Step 1: Run an independent review**
 
 Review against every section of the design, with emphasis on destructive operations, Windows path resolution, transaction restore, no business test execution, Rule trigger correctness and package resource completeness.
 
-- [ ] **Step 2: Fix validated findings with targeted tests**
+- [x] **Step 2: Fix validated findings with targeted tests**
 
 Each fix starts with a failing regression test, applies the minimum change, and reruns the targeted plus full suite.
 
-- [ ] **Step 3: Mark completed plan checkboxes and verify no placeholders**
+- [x] **Step 3: Mark completed plan checkboxes and verify no placeholders**
 
 Run:
 
@@ -480,7 +480,7 @@ rg -n "T[B]D|T[O]DO|F[I]XME|implement l[a]ter|Write tests for the a[b]ove" docs 
 git diff --check
 ```
 
-- [ ] **Step 4: Run final acceptance from a clean process**
+- [x] **Step 4: Run final acceptance from a clean process**
 
 Run:
 
@@ -495,9 +495,29 @@ uv run project-rules --help
 git status --short --branch
 ```
 
-- [ ] **Step 5: Commit plan closure**
+- [x] **Step 5: Commit plan closure**
 
 ```powershell
 git add -- docs/superpowers/plans/2026-07-27-project-execution-rules-implementation.md
 git commit -m "计划：记录首版开发验收结果"
 ```
+
+## 首版验收记录（2026-07-27）
+
+- 独立复审最终结论：`PASS，可合并`；无剩余 Critical 或 Important。
+- 复审关闭了 Windows junction 越界、managed checksum 漂移、事务授权混合、
+  task/explicit 路由、Reviewer 读取隔离、init 前后检查、repair/update 阶段门禁、
+  rollback 复验和稳定 manifest 错误协议。
+- `uv sync --locked`：成功，锁文件无变化。
+- `uv run ruff format --check src tests`：54 files already formatted。
+- `uv run ruff check src tests`：All checks passed。
+- `uv run pyright`：0 errors、0 warnings、0 informations。
+- `uv run pytest -q`：64 passed。
+- `uv build`：成功生成 `project_execution_rules-0.1.0` wheel 与 sdist。
+- 隔离 `uv tool install`：wheel 安装成功，`project-rules --help` 退出码为 0；
+  验收工具随后已卸载。
+- wheel 资源检查：Catalog、Reviewer Agent、`agent-governance`、
+  `tool-governance`、`rules-reviewer` Skill 均存在。
+- 占位符扫描与敏感/运行时文件扫描：无匹配；`git diff --check` 通过。
+- 本机当前终端没有 Windows 符号链接权限，真实项目 init 会按设计返回
+  `SYMLINK_UNAVAILABLE`；单元和 Windows 工作流测试通过注入链接实现验证事务。
