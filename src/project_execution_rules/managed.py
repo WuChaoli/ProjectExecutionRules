@@ -31,6 +31,7 @@ def build_managed_install_plan(
     *,
     adapter: AdapterId,
     paths: UserPaths,
+    adapter_home: Path,
     resource_version: str,
     selection: CatalogSelection,
     changes: tuple[Change, ...],
@@ -48,17 +49,17 @@ def build_managed_install_plan(
     planned: list[Change] = []
     entries: list[ManagedEntry] = []
     for change in changes:
-        if not is_safe_adapter_path(change.target, adapter_home=paths.home):
+        if not is_safe_adapter_path(change.target, adapter_home=adapter_home):
             raise ProjectRulesError(
                 "NON_MANAGED_CONFLICT",
                 f"refusing non-managed unsafe path: {change.target}",
                 evidence={"target": str(change.target)},
                 remediation="Remove the symlink or reparse ancestor, then retry.",
             )
-        logical = change.target.relative_to(paths.home).as_posix()
+        logical = change.target.relative_to(adapter_home).as_posix()
         desired_hash = sha256_bytes(change.content)
         if change.target.exists() or change.target.is_symlink():
-            if not is_safe_adapter_file(change.target, adapter_home=paths.home):
+            if not is_safe_adapter_file(change.target, adapter_home=adapter_home):
                 raise ProjectRulesError(
                     "NON_MANAGED_CONFLICT",
                     f"refusing to overwrite non-managed file: {change.target}",

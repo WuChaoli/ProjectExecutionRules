@@ -40,6 +40,7 @@ class CodexAdapter:
         return build_managed_install_plan(
             adapter=self.id,
             paths=paths,
+            adapter_home=paths.home,
             resource_version=catalog.rules_version,
             selection=selection,
             changes=changes,

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from project_execution_rules.adapters import get_adapter
-from project_execution_rules.catalog import load_builtin_catalog
+from project_execution_rules.catalog import load_builtin_catalog, resource_root
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.frontmatter import parse_frontmatter
 from project_execution_rules.managed import ManagedManifest
@@ -203,10 +204,61 @@ def test_claude_manifest_selection_and_entries_match_planned_closure(
     assert manifest.selection.skills == selection.skills
     assert manifest.selection.agents == selection.agents
     assert {entry.logical_path for entry in manifest.entries} == {
-        ".claude/rules/pull-request.md",
-        ".claude/skills/pull-request/SKILL.md",
-        ".claude/agents/rules-reviewer.md",
+        "rules/pull-request.md",
+        "skills/pull-request/SKILL.md",
+        "agents/rules-reviewer.md",
     }
+    for entry in manifest.entries:
+        assert paths.claude_home.joinpath(entry.logical_path).is_relative_to(
+            paths.claude_home
+        )
+
+
+@pytest.mark.parametrize(
+    ("kind", "resource_id", "rule_ids", "error_code"),
+    (
+        ("rule", "pull-request", ("pull-request",), "RULE_RESOURCE_MISSING"),
+        ("skill", "pull-request", ("pull-request",), "SKILL_RESOURCE_MISSING"),
+        ("agent", "rules-reviewer", ("pull-request",), "AGENT_RESOURCE_MISSING"),
+    ),
+)
+def test_claude_install_reports_stable_missing_resource_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    resource_id: str,
+    rule_ids: tuple[str, ...],
+    error_code: str,
+) -> None:
+    paths = _paths(tmp_path)
+    catalog = load_builtin_catalog()
+    selection = resolve_catalog_selection(
+        catalog,
+        rule_ids,
+        adapter=AdapterId.CLAUDE,
+    )
+    original_root = Path(str(resource_root()))
+    staged_root = tmp_path / "resources"
+
+    shutil.copytree(original_root, staged_root)
+    if kind == "rule":
+        relative = Path("rules") / catalog.rules[resource_id].file
+    elif kind == "skill":
+        relative = Path(catalog.skills[resource_id].file)
+    else:
+        relative = Path(catalog.agents[resource_id].file)
+    staged_root.joinpath(relative).unlink()
+    monkeypatch.setattr(
+        "project_execution_rules.adapters.claude.resource_root",
+        lambda: staged_root,
+    )
+
+    with pytest.raises(ProjectRulesError) as caught:
+        get_adapter(AdapterId.CLAUDE).plan_install(paths, catalog, selection)
+
+    assert caught.value.code == error_code
+    assert resource_id in caught.value.message
+    assert str(staged_root.joinpath(relative)) in caught.value.evidence["path"]
 
 
 def test_claude_install_refuses_non_managed_conflict(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from jinja2 import BaseLoader, Environment, StrictUndefined, TemplateNotFound
@@ -9,6 +10,7 @@ from jinja2 import BaseLoader, Environment, StrictUndefined, TemplateNotFound
 from project_execution_rules.adapters.base import AdapterDetection, CommandRunner
 from project_execution_rules.catalog import resource_root
 from project_execution_rules.detection import ProjectFacts
+from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.frontmatter import parse_frontmatter
 from project_execution_rules.initialize import ProjectSelection
 from project_execution_rules.managed import build_managed_install_plan
@@ -45,6 +47,7 @@ class ClaudeAdapter:
         return build_managed_install_plan(
             adapter=self.id,
             paths=paths,
+            adapter_home=paths.claude_home,
             resource_version=catalog.rules_version,
             selection=selection,
             changes=changes,
@@ -77,7 +80,8 @@ class ClaudeAdapter:
 
         for rule_id in selection.rules:
             definition = catalog.rules[rule_id]
-            source = root.joinpath("rules", definition.file).read_text(encoding="utf-8")
+            source_path = root.joinpath("rules", definition.file)
+            source = _read_resource(source_path, "Rule", rule_id)
             _, body = parse_frontmatter(source)
             target = paths.claude_rules / f"{rule_id}.md"
             changes.append(
@@ -93,7 +97,8 @@ class ClaudeAdapter:
 
         for skill_id in selection.skills:
             definition = catalog.skills[skill_id]
-            source = root.joinpath(definition.file).read_text(encoding="utf-8")
+            source_path = root.joinpath(definition.file)
+            source = _read_resource(source_path, "Skill", skill_id)
             metadata, body = parse_frontmatter(source)
             description = str(metadata.get("description", f"Apply the {skill_id} Skill."))
             target = paths.claude_skills / skill_id / "SKILL.md"
@@ -117,7 +122,8 @@ class ClaudeAdapter:
 
         for agent_id in selection.agents:
             definition = catalog.agents[agent_id]
-            body = root.joinpath(definition.file).read_text(encoding="utf-8")
+            source_path = root.joinpath(definition.file)
+            body = _read_resource(source_path, "Agent", agent_id)
             skills = [
                 skill_id
                 for skill_id in definition.skills
@@ -141,6 +147,16 @@ class ClaudeAdapter:
             resource_kind[target] = "agent"
 
         return tuple(changes), resource_kind
+
+
+def _read_resource(path: Traversable, kind: str, resource_id: str) -> str:
+    if not path.is_file():
+        raise ProjectRulesError(
+            f"{kind.upper()}_RESOURCE_MISSING",
+            f"{kind} resource is missing: {resource_id}",
+            evidence={"id": resource_id, "path": str(path)},
+        )
+    return path.read_text(encoding="utf-8")
 
 
 class _ResourceTemplateLoader(BaseLoader):
