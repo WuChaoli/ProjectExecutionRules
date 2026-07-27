@@ -26,6 +26,21 @@ def _paths(tmp_path: Path) -> UserPaths:
     )
 
 
+def _install_claude(tmp_path: Path) -> UserPaths:
+    paths = _paths(tmp_path)
+    catalog = load_builtin_catalog()
+    selection = resolve_catalog_selection(
+        catalog,
+        catalog.rules,
+        adapter=AdapterId.CLAUDE,
+    )
+    plan = get_adapter(AdapterId.CLAUDE).plan_install(paths, catalog, selection)
+    for change in plan.changes:
+        change.target.parent.mkdir(parents=True, exist_ok=True)
+        change.target.write_bytes(change.content)
+    return paths
+
+
 def _content(plan: ChangePlan, target: Path) -> str:
     return next(
         change.content.decode()
@@ -331,6 +346,115 @@ def test_claude_project_init_preserves_existing_guide(tmp_path: Path) -> None:
     assert guide.read_text(encoding="utf-8") == "project-owned\n"
 
 
+def test_claude_project_init_rejects_symlinked_claude_home(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    paths = _install_claude(tmp_path)
+    outside = root / "outside-claude"
+    outside.mkdir()
+    try:
+        (root / ".claude").symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symbolic links are unavailable: {error}")
+
+    with pytest.raises(ProjectRulesError) as caught:
+        get_adapter(AdapterId.CLAUDE).plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(core_domains=("security",)),
+            paths,
+        )
+
+    assert caught.value.code == "PROJECT_OWNERSHIP_CONFLICT"
+
+
+def test_claude_project_init_preserves_edited_extension(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        '[project]\nname="sample"\nrequires-python=">=3.11"\n',
+        encoding="utf-8",
+    )
+    paths = _install_claude(tmp_path)
+    extension = root / ".claude" / "rules" / "python.project.md"
+    extension.parent.mkdir(parents=True)
+    extension.write_text("project-owned edit\n", encoding="utf-8")
+
+    plan = get_adapter(AdapterId.CLAUDE).plan_project_init(
+        root,
+        detect_project(root),
+        ProjectSelection(core_domains=("security",), override_domains=("python",)),
+        paths,
+    )
+
+    assert extension not in {change.target for change in plan.changes}
+    assert extension.read_text(encoding="utf-8") == "project-owned edit\n"
+
+
+@pytest.mark.parametrize("unsafe_kind", ("directory", "symlink"))
+def test_claude_project_init_rejects_unsafe_extension_target(
+    tmp_path: Path,
+    unsafe_kind: str,
+) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        '[project]\nname="sample"\nrequires-python=">=3.11"\n',
+        encoding="utf-8",
+    )
+    paths = _install_claude(tmp_path)
+    extension = root / ".claude" / "rules" / "python.project.md"
+    extension.parent.mkdir(parents=True)
+    if unsafe_kind == "directory":
+        extension.mkdir()
+    else:
+        target = root / "outside.md"
+        target.write_text("outside\n", encoding="utf-8")
+        try:
+            extension.symlink_to(target)
+        except OSError as error:
+            pytest.skip(f"symbolic links are unavailable: {error}")
+
+    with pytest.raises(ProjectRulesError) as caught:
+        get_adapter(AdapterId.CLAUDE).plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(core_domains=("security",), override_domains=("python",)),
+            paths,
+        )
+
+    assert caught.value.code == "PROJECT_OWNERSHIP_CONFLICT"
+
+
+def test_claude_project_init_rejects_symlinked_rules_ancestor(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        '[project]\nname="sample"\nrequires-python=">=3.11"\n',
+        encoding="utf-8",
+    )
+    paths = _install_claude(tmp_path)
+    claude_home = root / ".claude"
+    claude_home.mkdir()
+    outside = root / "outside-rules"
+    outside.mkdir()
+    try:
+        (claude_home / "rules").symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symbolic links are unavailable: {error}")
+
+    with pytest.raises(ProjectRulesError) as caught:
+        get_adapter(AdapterId.CLAUDE).plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(core_domains=("security",), override_domains=("python",)),
+            paths,
+        )
+
+    assert caught.value.code == "PROJECT_OWNERSHIP_CONFLICT"
+
+
 def test_claude_project_init_requires_matching_manifest_closure(tmp_path: Path) -> None:
     root = tmp_path / "project"
     (root / ".git").mkdir(parents=True)
@@ -372,6 +496,47 @@ def test_claude_project_init_rejects_manifest_missing_selected_entry(
         for entry in manifest["entries"]
         if entry["logical_path"] != "rules/security.md"
     ]
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ProjectRulesError) as caught:
+        get_adapter(AdapterId.CLAUDE).plan_project_init(
+            root,
+            detect_project(root),
+            ProjectSelection(core_domains=("security",)),
+            paths,
+        )
+
+    assert caught.value.code == "USER_ADAPTER_CLOSURE_MISMATCH"
+
+
+@pytest.mark.parametrize("corruption", ("extra-selection", "wrong-kind", "extra-entry"))
+def test_claude_project_init_rejects_non_exact_global_closure(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    paths = _install_claude(tmp_path)
+    manifest_path = paths.manifest_path(AdapterId.CLAUDE)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if corruption == "extra-selection":
+        manifest["selection"]["rules"].append("unknown-rule")
+    elif corruption == "wrong-kind":
+        entry = next(
+            item
+            for item in manifest["entries"]
+            if item["logical_path"] == "rules/security.md"
+        )
+        entry["kind"] = "skill"
+    else:
+        manifest["entries"].append(
+            {
+                "logical_path": "rules/extra.md",
+                "kind": "rule",
+                "sha256": "0" * 64,
+            }
+        )
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
     with pytest.raises(ProjectRulesError) as caught:

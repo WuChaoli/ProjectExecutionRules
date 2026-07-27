@@ -235,49 +235,17 @@ def init_project(
             core_domains=core_domains,
             override_domains=("python",) if has_python_difference else (),
         )
-        user_plan = plan_user_install(paths, catalog)
-        project_plan = plan_project_init(
-            root,
-            facts,
-            selection,
-            paths,
-            verify_user_install=False,
-        )
+        project_plan = plan_project_init(root, facts, selection, paths)
         summary = _selection_summary(catalog, core_domains)
-        user_operation = None
         if dry_run:
             emit(
                 {
                     "selection": summary,
-                    "user": user_plan.to_dict(),
                     "project": project_plan.to_dict(),
                 },
                 output_format,
             )
             return
-        if user_plan.changes:
-            if not yes:
-                emit(
-                    {"selection": summary, "user": user_plan.to_dict()},
-                    output_format,
-                )
-            user_confirmed = confirm_or_cancel(
-                "先安装或更新用户级 Rules 资源？",
-                yes=yes,
-            )
-            user_operation = install_user_resources(
-                user_plan,
-                paths,
-                confirmed=user_confirmed,
-            )
-            if output_format is OutputFormat.HUMAN:
-                emit(user_operation, output_format)
-            if not user_operation.changed:
-                raise ProjectRulesError(
-                    "USER_INSTALL_REQUIRED",
-                    "project initialization requires the user-level installation",
-                )
-        project_plan = plan_project_init(root, facts, selection, paths)
         if not yes:
             emit(
                 {"selection": summary, "project": project_plan.to_dict()},
@@ -294,9 +262,6 @@ def init_project(
         emit(
             {
                 "operation": operation.to_dict(),
-                "user_operation": (
-                    user_operation.to_dict() if user_operation is not None else None
-                ),
                 "check": report.to_dict() if report else None,
             },
             output_format,

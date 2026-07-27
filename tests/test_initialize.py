@@ -13,6 +13,7 @@ from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.frontmatter import parse_frontmatter
 from project_execution_rules.initialize import (
     ProjectSelection,
+    compose_project_changes,
     initialize_project,
     plan_project_init,
 )
@@ -343,6 +344,60 @@ def test_init_rejects_cross_adapter_target_collisions(
         )
 
     assert caught.value.code == "ADAPTER_PROJECT_COLLISION"
+
+
+def test_project_composition_rejects_reserved_ruleset_target(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    plan = ChangePlan(
+        scope="project:codex",
+        changes=(Change("write", root / ".rules" / "ruleset.yaml", b"adapter"),),
+    )
+
+    with pytest.raises(ProjectRulesError) as caught:
+        compose_project_changes(root, ((AdapterId.CODEX, plan),))
+
+    assert caught.value.code == "ADAPTER_PROJECT_CONTRACT"
+
+
+def test_project_composition_rejects_canonical_alias_collision(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    plans = (
+        (
+            AdapterId.CODEX,
+            ChangePlan(
+                scope="project:codex",
+                changes=(Change("write", root / "same.md", b"codex"),),
+            ),
+        ),
+        (
+            AdapterId.CLAUDE,
+            ChangePlan(
+                scope="project:claude",
+                changes=(Change("write", root / "x" / ".." / "same.md", b"claude"),),
+            ),
+        ),
+    )
+
+    with pytest.raises(ProjectRulesError) as caught:
+        compose_project_changes(root, plans)
+
+    assert caught.value.code == "ADAPTER_PROJECT_COLLISION"
+
+
+def test_project_composition_rejects_target_outside_project(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    plan = ChangePlan(
+        scope="project:claude",
+        changes=(Change("write", tmp_path / "outside.md", b"outside"),),
+    )
+
+    with pytest.raises(ProjectRulesError) as caught:
+        compose_project_changes(root, ((AdapterId.CLAUDE, plan),))
+
+    assert caught.value.code == "ADAPTER_PROJECT_CONTRACT"
 
 
 def test_claude_only_init_does_not_probe_symlink_capability(tmp_path: Path) -> None:

@@ -5,6 +5,19 @@
 - `.rules/ruleset.yaml` is the shared project Rule Set and records every selected Adapter.
 - Claude Base Rules, Skills, and Agents remain user-level managed resources; do not copy or link them into this project.
 
+## Responsibilities
+
+- **Rule** defines constraints and triggers; read the relevant Base Rule before acting.
+- **Skill** provides a reusable workflow for executing a Rule-governed task.
+- **Agent** coordinates a bounded role and may invoke the Skills declared for it.
+
+## Project Growth
+
+- Add project facts or narrower execution detail as `.claude/rules/<rule-id>.project.md`.
+- Add project-owned workflows under `.claude/skills/<skill-id>/SKILL.md`.
+- Add project-owned roles under `.claude/agents/<agent-id>.md`.
+- Local resources extend the project; never copy or link user-level Claude Base resources here.
+
 ## Project Rule Extensions
 
 - Read non-empty project-owned extensions from `.claude/rules/<rule-id>.project.md` when present.

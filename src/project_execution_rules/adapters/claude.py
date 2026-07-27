@@ -85,8 +85,23 @@ class ClaudeAdapter:
         if verify_user_install:
             validate_user_install(self.id, selection, paths)
         changes: list[Change] = []
-        guide = resolved / ".claude" / "CLAUDE.md"
-        if not guide.exists() and not guide.is_symlink():
+        project_claude_home = resolved / ".claude"
+        if project_claude_home.is_symlink() or (
+            project_claude_home.exists() and not project_claude_home.is_dir()
+        ):
+            raise ProjectRulesError(
+                "PROJECT_OWNERSHIP_CONFLICT",
+                f"Claude project directory is unsafe: {project_claude_home}",
+                evidence={"target": str(project_claude_home)},
+            )
+        guide = project_claude_home / "CLAUDE.md"
+        if guide.is_symlink() or (guide.exists() and not guide.is_file()):
+            raise ProjectRulesError(
+                "PROJECT_OWNERSHIP_CONFLICT",
+                f"Claude project guide target is unsafe: {guide}",
+                evidence={"target": str(guide)},
+            )
+        if not guide.exists():
             changes.append(
                 Change(
                     action="write",
@@ -102,13 +117,30 @@ class ClaudeAdapter:
                 )
             content = render_python_project_extension(facts)
             if content:
-                changes.append(
-                    Change(
-                        action="write",
-                        target=resolved / ".claude" / "rules" / f"{domain}.project.md",
-                        content=content.encode(),
+                rules_dir = project_claude_home / "rules"
+                if rules_dir.is_symlink() or (
+                    rules_dir.exists() and not rules_dir.is_dir()
+                ):
+                    raise ProjectRulesError(
+                        "PROJECT_OWNERSHIP_CONFLICT",
+                        f"Claude project rules directory is unsafe: {rules_dir}",
+                        evidence={"target": str(rules_dir)},
                     )
-                )
+                target = rules_dir / f"{domain}.project.md"
+                if target.is_symlink() or (target.exists() and not target.is_file()):
+                    raise ProjectRulesError(
+                        "PROJECT_OWNERSHIP_CONFLICT",
+                        f"Claude Project Rule Extension target is unsafe: {target}",
+                        evidence={"target": str(target)},
+                    )
+                if not target.exists():
+                    changes.append(
+                        Change(
+                            action="write",
+                            target=target,
+                            content=content.encode(),
+                        )
+                    )
         return ChangePlan(
             scope="project:claude",
             changes=tuple(change for change in changes if project_change_required(change)),

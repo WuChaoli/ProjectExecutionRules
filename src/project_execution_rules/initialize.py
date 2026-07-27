@@ -53,6 +53,30 @@ def project_change_required(change: Change) -> bool:
     return True
 
 
+def _expected_manifest_entries(
+    adapter: AdapterId,
+    selection: object,
+) -> dict[str, str]:
+    from project_execution_rules.managed import ManagedSelection
+
+    selected = selection
+    if not isinstance(selected, ManagedSelection):
+        raise TypeError("selection must be ManagedSelection")
+    if adapter is AdapterId.CLAUDE:
+        return {
+            **{f"rules/{item}.md": "rule" for item in selected.rules},
+            **{f"skills/{item}/SKILL.md": "skill" for item in selected.skills},
+            **{f"agents/{item}.md": "agent" for item in selected.agents},
+        }
+    return {
+        **{f".agents/rules/{item}-rules.md": "rule" for item in selected.rules},
+        ".agents/rules/catalog.yaml": "rule",
+        ".agents/rules/review-report.schema.json": "rule",
+        **{f".codex/skills/{item}/SKILL.md": "skill" for item in selected.skills},
+        **{f".codex/agents/{item}.toml": "agent" for item in selected.agents},
+    }
+
+
 def validate_user_install(
     adapter: AdapterId,
     selection: ProjectSelection,
@@ -67,33 +91,61 @@ def validate_user_install(
             "USER_ADAPTER_NOT_INSTALLED",
             f"selected Adapter is not installed: {adapter.value}",
             evidence={"adapter": adapter.value, "manifest": str(manifest_path)},
+            remediation=f"Run `project-rules install --adapter {adapter.value}` first.",
         )
     manifest = ManagedManifest.load(manifest_path, expected_adapter=adapter)
     catalog = load_builtin_catalog()
+    if manifest.resource_version != catalog.rules_version:
+        raise ProjectRulesError(
+            "USER_ADAPTER_CLOSURE_MISMATCH",
+            f"installed Adapter version does not match the Catalog: {adapter.value}",
+            evidence={
+                "adapter": adapter.value,
+                "installed": manifest.resource_version,
+                "required": catalog.rules_version,
+            },
+            remediation=f"Run `project-rules install --adapter {adapter.value}`.",
+        )
     required = resolve_catalog_selection(
         catalog,
         selection.core_domains + catalog.profiles["python"],
         adapter=adapter,
     )
     selected = manifest.selection
+    try:
+        installed_closure = resolve_catalog_selection(
+            catalog,
+            selected.rules,
+            adapter=adapter,
+        )
+    except ValueError as error:
+        raise ProjectRulesError(
+            "USER_ADAPTER_CLOSURE_MISMATCH",
+            f"installed Adapter selection is not a Catalog closure: {adapter.value}",
+            evidence={"adapter": adapter.value, "error": str(error)},
+            remediation=f"Run `project-rules install --adapter {adapter.value}`.",
+        ) from error
+    expected_selection = (
+        set(installed_closure.rules),
+        set(installed_closure.skills),
+        set(installed_closure.agents),
+    )
+    actual_selection = (set(selected.rules), set(selected.skills), set(selected.agents))
+    expected_entries = _expected_manifest_entries(adapter, selected)
     entries = {entry.logical_path: entry for entry in manifest.entries}
-    if adapter is AdapterId.CLAUDE:
-        required_paths = {
-            *(f"rules/{rule_id}.md" for rule_id in required.rules),
-            *(f"skills/{skill_id}/SKILL.md" for skill_id in required.skills),
-            *(f"agents/{agent_id}.md" for agent_id in required.agents),
-        }
-    else:
-        required_paths = {
-            *(f".agents/rules/{rule_id}-rules.md" for rule_id in required.rules),
-            *(f".codex/skills/{skill_id}/SKILL.md" for skill_id in required.skills),
-            *(f".codex/agents/{agent_id}.toml" for agent_id in required.agents),
-        }
+    if expected_selection != actual_selection or {
+        path: entry.kind for path, entry in entries.items()
+    } != expected_entries:
+        raise ProjectRulesError(
+            "USER_ADAPTER_CLOSURE_MISMATCH",
+            f"installed Adapter manifest is not the exact Catalog closure: {adapter.value}",
+            evidence={"adapter": adapter.value},
+            remediation=f"Run `project-rules install --adapter {adapter.value}`.",
+        )
     if not (
         set(required.rules) <= set(selected.rules)
         and set(required.skills) <= set(selected.skills)
         and set(required.agents) <= set(selected.agents)
-        and required_paths <= set(entries)
     ):
         raise ProjectRulesError(
             "USER_ADAPTER_CLOSURE_MISMATCH",
@@ -116,28 +168,52 @@ def validate_user_install(
             )
 
 
-def _compose_project_changes(
+def compose_project_changes(
+    root: Path,
     plans: tuple[tuple[AdapterId, ChangePlan], ...],
 ) -> tuple[Change, ...]:
+    resolved_root = root.resolve()
+    reserved = resolved_root / ".rules" / "ruleset.yaml"
     changes: list[Change] = []
     owners: dict[Path, tuple[AdapterId, Change]] = {}
     for adapter, plan in plans:
         for change in plan.changes:
-            previous = owners.get(change.target)
+            canonical = change.target.resolve(strict=False)
+            try:
+                canonical.relative_to(resolved_root)
+            except ValueError as error:
+                raise ProjectRulesError(
+                    "ADAPTER_PROJECT_CONTRACT",
+                    f"Adapter planned a target outside the project: {change.target}",
+                    evidence={"adapter": adapter.value, "target": str(change.target)},
+                ) from error
+            if canonical == reserved:
+                raise ProjectRulesError(
+                    "ADAPTER_PROJECT_CONTRACT",
+                    "Adapter planned the orchestrator-reserved Rule Set target",
+                    evidence={"adapter": adapter.value, "target": str(change.target)},
+                )
+            normalized = Change(
+                action=change.action,
+                target=canonical,
+                content=change.content,
+                link_target=change.link_target,
+            )
+            previous = owners.get(canonical)
             if previous is not None:
                 previous_adapter, previous_change = previous
-                if previous_change != change:
+                if previous_change != normalized:
                     raise ProjectRulesError(
                         "ADAPTER_PROJECT_COLLISION",
-                        f"Adapters plan conflicting project changes: {change.target}",
+                        f"Adapters plan conflicting project changes: {canonical}",
                         evidence={
-                            "target": str(change.target),
+                            "target": str(canonical),
                             "adapters": [previous_adapter.value, adapter.value],
                         },
                     )
                 continue
-            owners[change.target] = (adapter, change)
-            changes.append(change)
+            owners[canonical] = (adapter, normalized)
+            changes.append(normalized)
     return tuple(changes)
 
 
@@ -182,11 +258,7 @@ def plan_project_init(
         )
         for adapter in selected_adapters
     )
-    changes = [
-        change
-        for change in _compose_project_changes(adapter_plans)
-        if change.target != root.resolve() / ".rules" / "ruleset.yaml"
-    ]
+    changes = list(compose_project_changes(root, adapter_plans))
     ruleset = Change(
         action="write",
         target=root.resolve() / ".rules" / "ruleset.yaml",

@@ -166,6 +166,65 @@ overrides:
     assert "rules_version: 0.9.0" in ruleset.read_text(encoding="utf-8")
 
 
+def _snapshot_files(root: Path) -> dict[str, bytes]:
+    if not root.exists():
+        return {}
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_init_preserves_installed_user_resources(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    home = tmp_path / "home"
+    local = tmp_path / "local"
+    environment = {"USERPROFILE": str(home), "LOCALAPPDATA": str(local)}
+    installed = runner.invoke(
+        app,
+        ["install", "--yes", "--format", "json"],
+        env=environment,
+    )
+    assert installed.exit_code == 0
+    before_home = _snapshot_files(home)
+    before_state = _snapshot_files(local / "ProjectExecutionRules")
+
+    result = runner.invoke(
+        app,
+        ["init", "--root", str(root), "--yes", "--format", "json"],
+        env=environment,
+    )
+
+    assert result.exit_code == 0
+    assert _snapshot_files(home) == before_home
+    assert _snapshot_files(local / "ProjectExecutionRules") == before_state
+
+
+def test_init_does_not_install_missing_user_resources(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
+    home = tmp_path / "home"
+    local = tmp_path / "local"
+
+    result = runner.invoke(
+        app,
+        ["init", "--root", str(root), "--yes", "--format", "json"],
+        env={"USERPROFILE": str(home), "LOCALAPPDATA": str(local)},
+    )
+
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "USER_ADAPTER_NOT_INSTALLED"
+    assert "install" in payload["remediation"]
+    assert not (home / ".agents").exists()
+    assert not (home / ".codex").exists()
+    assert not (local / "ProjectExecutionRules" / "managed-user-codex.json").exists()
+
+
 def test_init_json_returns_stable_error_for_non_git_project(tmp_path: Path) -> None:
     root = tmp_path / "project"
     root.mkdir()
@@ -298,7 +357,6 @@ def test_init_dry_run_reports_selected_triggers(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     routes = {item["domain"]: item for item in payload["selection"]["rules"]}
-    assert payload["user"]["scope"] == "user"
     assert payload["project"]["scope"] == "project"
     assert routes["security"]["activation"] == "always"
     assert routes["git"]["tasks"] == ["branch", "commit", "merge", "worktree"]
