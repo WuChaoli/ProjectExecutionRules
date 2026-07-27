@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -25,6 +25,47 @@ class ProjectState(StrEnum):
 class OutputFormat(StrEnum):
     HUMAN = "human"
     JSON = "json"
+
+
+@dataclass(frozen=True, slots=True)
+class Change:
+    action: str
+    target: Path
+    content: bytes = b""
+    link_target: Path | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "action": self.action,
+            "target": str(self.target),
+            "link_target": str(self.link_target) if self.link_target else None,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ChangePlan:
+    scope: str
+    changes: tuple[Change, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "scope": self.scope,
+            "changes": [change.to_dict() for change in self.changes],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OperationReport:
+    changed: bool
+    transaction_id: str | None
+    changes: tuple[Change, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "changed": self.changed,
+            "transaction_id": self.transaction_id,
+            "changes": [change.to_dict() for change in self.changes],
+        }
 
 
 @dataclass(frozen=True, slots=True)
