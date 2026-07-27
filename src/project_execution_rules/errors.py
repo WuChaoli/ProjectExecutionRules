@@ -34,4 +34,3 @@ class ProjectRulesError(RuntimeError):
 
 class TransactionError(ProjectRulesError):
     """A managed filesystem transaction failed."""
-

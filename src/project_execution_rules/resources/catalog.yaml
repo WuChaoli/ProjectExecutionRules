@@ -1,0 +1,107 @@
+schema_version: 1
+rules_version: 1.0.0
+
+profiles:
+  python:
+    - python
+
+rules:
+  security:
+    file: core/security-rules.md
+    activation: always
+    core: true
+    required: true
+  testing:
+    file: core/testing-rules.md
+    activation: paths
+    paths:
+      - "tests/**/*"
+      - "test/**/*"
+    core: true
+  documentation:
+    file: core/documentation-rules.md
+    activation: paths
+    paths:
+      - "**/*.md"
+    core: true
+  git:
+    file: core/git-rules.md
+    activation: task
+    tasks:
+      - branch
+      - commit
+      - merge
+      - worktree
+    core: true
+  pull-request:
+    file: core/pull-request-rules.md
+    activation: task
+    tasks:
+      - pull-request
+      - review
+    core: true
+  ci-cd:
+    file: core/ci-cd-rules.md
+    activation: paths
+    paths:
+      - ".github/workflows/**/*"
+      - ".gitlab-ci.yml"
+    core: true
+  debug:
+    file: core/debug-rules.md
+    activation: task
+    tasks:
+      - debug
+      - troubleshoot
+    core: true
+  observability:
+    file: core/observability-rules.md
+    activation: task
+    tasks:
+      - logging
+      - tracing
+      - performance
+    core: true
+  architecture:
+    file: core/architecture-rules.md
+    activation: task
+    tasks:
+      - architecture
+      - interface
+      - data-flow
+    core: true
+  external-services:
+    file: core/external-services-rules.md
+    activation: task
+    tasks:
+      - external-service
+      - integration
+    core: true
+  agent:
+    file: core/agent-rules.md
+    activation: explicit
+    commands:
+      - agent-governance
+    core: true
+  tool:
+    file: core/tool-rules.md
+    activation: explicit
+    commands:
+      - tool-governance
+    core: true
+  harness:
+    file: core/harness-rules.md
+    activation: explicit
+    commands:
+      - rules-review
+    core: true
+  python:
+    file: profiles/python/python-rules.md
+    activation: paths
+    paths:
+      - "**/*.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "poetry.lock"
+      - "Pipfile.lock"
+    core: false
