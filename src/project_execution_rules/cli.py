@@ -221,7 +221,8 @@ def init_project(
             dry_run=dry_run,
         )
         paths = _paths()
-        facts = detect_project(root)
+        resolved_root = root.resolve()
+        facts = detect_project(resolved_root)
         catalog = load_builtin_catalog()
         core_domains = _select_core_domains(
             catalog,
@@ -235,7 +236,7 @@ def init_project(
             core_domains=core_domains,
             override_domains=("python",) if has_python_difference else (),
         )
-        project_plan = plan_project_init(root, facts, selection, paths)
+        project_plan = plan_project_init(resolved_root, facts, selection, paths)
         summary = _selection_summary(catalog, core_domains)
         if dry_run:
             emit(
@@ -254,11 +255,11 @@ def init_project(
         confirmed = confirm_or_cancel("初始化当前项目 Rules？", yes=yes)
         operation = initialize_project(
             project_plan,
-            root,
+            resolved_root,
             paths,
             confirmed=confirmed,
         )
-        report = check_project(root, paths) if operation.changed else None
+        report = check_project(resolved_root, paths) if operation.changed else None
         emit(
             {
                 "operation": operation.to_dict(),

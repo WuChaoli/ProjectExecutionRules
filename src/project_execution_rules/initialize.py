@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from project_execution_rules.detection import ProjectFacts
@@ -248,6 +248,8 @@ def plan_project_init(
     from project_execution_rules.rendering import render_ruleset
 
     selected_adapters = normalize_adapters(adapters or selection.adapters)
+    resolved_root = root.resolve()
+    resolved_facts = replace(facts, root=resolved_root)
     if not selected_adapters:
         raise ProjectRulesError("ADAPTER_REQUIRED", "at least one project Adapter is required")
     if not facts.is_git:
@@ -267,8 +269,8 @@ def plan_project_init(
         (
             adapter,
             get_adapter(adapter).plan_project_init(
-                root,
-                facts,
+                resolved_root,
+                resolved_facts,
                 selection,
                 paths,
                 verify_user_install=False,
@@ -276,9 +278,9 @@ def plan_project_init(
         )
         for adapter in selected_adapters
     )
-    changes = list(compose_project_changes(root, adapter_plans))
-    ruleset_target = root.resolve() / ".rules" / "ruleset.yaml"
-    if has_reparse_ancestor(ruleset_target.parent, root=root.resolve()):
+    changes = list(compose_project_changes(resolved_root, adapter_plans))
+    ruleset_target = resolved_root / ".rules" / "ruleset.yaml"
+    if has_reparse_ancestor(ruleset_target.parent, root=resolved_root):
         raise ProjectRulesError(
             "ADAPTER_PROJECT_CONTRACT",
             "shared Rule Set target uses an unsafe project path",
@@ -330,6 +332,7 @@ def initialize_project(
         return OperationReport(changed=False, transaction_id=None, changes=())
     if not plan.changes:
         return OperationReport(changed=False, transaction_id=None, changes=())
+    resolved_root = root.resolve()
     probe = symlink_probe or (lambda: probe_symlink_capability(paths))
     has_symlinks = any(change.action == "symlink" for change in plan.changes)
     if has_symlinks and not probe():
@@ -341,7 +344,7 @@ def initialize_project(
     verifier = link_verifier or _actual_link_verifier
     transaction = FileTransaction(
         paths.state_home,
-        root,
+        resolved_root,
         symlink_factory=symlink_factory,
     )
     for change in plan.changes:
@@ -377,7 +380,7 @@ def initialize_project(
         )
     )
     if stage_files is None:
-        _default_stage(root, staged)
+        _default_stage(resolved_root, staged)
     else:
         stage_files(staged)
     transaction_id = transaction.transaction_id

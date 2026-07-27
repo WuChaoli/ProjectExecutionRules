@@ -484,6 +484,51 @@ def test_project_composition_rejects_target_outside_project(tmp_path: Path) -> N
     assert caught.value.code == "ADAPTER_PROJECT_CONTRACT"
 
 
+def test_init_through_symlinked_project_root_targets_real_project(tmp_path: Path) -> None:
+    real_root = tmp_path / "real-project"
+    (real_root / ".git").mkdir(parents=True)
+    (real_root / "pyproject.toml").write_text(
+        '[project]\nname="sample"\nrequires-python=">=3.11"\n',
+        encoding="utf-8",
+    )
+    root_alias = tmp_path / "project-alias"
+    try:
+        root_alias.symlink_to(real_root, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"directory symlinks are unavailable: {error}")
+    paths = _install_adapters(tmp_path, (AdapterId.CLAUDE,))
+
+    plan = plan_project_init(
+        root_alias,
+        detect_project(root_alias),
+        ProjectSelection(
+            core_domains=("security",),
+            override_domains=("python",),
+            adapters=(AdapterId.CLAUDE,),
+        ),
+        paths,
+    )
+
+    assert plan.changes
+    assert all(change.target.is_relative_to(real_root) for change in plan.changes)
+    staged: list[tuple[Path, ...]] = []
+    report = initialize_project(
+        plan,
+        root_alias,
+        paths,
+        confirmed=True,
+        stage_files=lambda files: staged.append(files),
+        symlink_probe=lambda: pytest.fail("Claude-only init must not probe symlinks"),
+    )
+
+    assert report.changed
+    assert (real_root / ".claude" / "CLAUDE.md").is_file()
+    assert (real_root / ".claude" / "rules" / "python.project.md").is_file()
+    assert (real_root / ".rules" / "ruleset.yaml").is_file()
+    assert all(path.is_relative_to(real_root) for path in staged[0])
+    assert not (tmp_path / ".claude").exists()
+
+
 def test_claude_only_init_does_not_probe_symlink_capability(tmp_path: Path) -> None:
     root = tmp_path / "project"
     (root / ".git").mkdir(parents=True)

@@ -12,6 +12,7 @@
 4. 补充损坏 manifest 缺少 selected entry 的闭包测试，先确认 `DID NOT RAISE` RED，再校验 selection、entries 和 checksum closure，回归测试转 GREEN。
 5. Review fix round 1 先补真实 CLI、extension ownership、exact closure、reserved/canonical target 回归；观察 6 个行为失败与缺失 composition API 的 collection RED，再逐项修复并转 GREEN。
 6. Review fix round 2 用真实 leaf symlink 复现 compose 将 target 改写为 victim、guide symlink 错拒及 `.rules` symlink 绕过；4 个测试 RED 后改为 lexical identity + resolved parent/basename，并补 Windows junction/reparse 回归。
+7. Review fix round 3 用真实 symlinked project root 复现 Adapter 生成真实路径但 composer 以 alias 做 lexical containment 而报 `ADAPTER_PROJECT_CONTRACT`；确认 RED 后在 planning 入口统一 resolved root，并让 detect、Adapters、composer、transaction、staging 与 check 使用同一真实根目录，回归转 GREEN。
 
 ## 实施内容
 
@@ -24,14 +25,15 @@
 - `.rules/ruleset.yaml` 由组合层唯一生成并作为 orchestrator reserved target；任何 Adapter 计划该 target 都立即报 contract error。
 - project targets 以 lexical normalized project-relative path 识别 reserved target，再解析安全 parent 并拼回原 basename；不 dereference leaf symlink。最终 targets 约束在 project root 内，alias 对同一目标的不同 action/content 触发 `ADAPTER_PROJECT_COLLISION`。
 - Claude 与 shared Rule Set 的 ancestor 链统一拒绝 symlink、Windows junction 和其他 reparse point；`.rules/ruleset.yaml` 的 reserved 检查先于 ancestor 解析。
+- 用户可通过 symlinked project root 定位仓库；planning 入口只解析一次真实根目录，project facts、Adapters、composer、transaction、staging 与 CLI check 均共享该根目录，同时 project 内 descendant reparse 仍按既有规则拒绝。
 - symlink capability 仅在实际 plan 含 symlink 时探测；Claude-only init 不依赖 Windows Developer Mode。
 - staging 仅包含项目 guide、共享 Rule Set 与 Project Rule Extensions/Overrides，不包含 empty dirs 或 Base links。
 - 项目生成内容保持项目所有权，不写入 Adapter managed manifest。
 
 ## 验证摘要
 
-- Focused + CLI + Windows workflow：`59 passed`
-- Full pytest：`171 passed`
+- Focused + CLI + Windows workflow：`91 passed`
+- Full pytest：`172 passed`
 - Ruff：`All checks passed!`
 - Full Pyright：`0 errors, 0 warnings, 0 informations`
 - Diff check：通过
