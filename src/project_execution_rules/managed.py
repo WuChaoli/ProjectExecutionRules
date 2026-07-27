@@ -59,9 +59,8 @@ class ManagedManifest:
             tuple(sorted(self.entries, key=lambda entry: (entry.logical_path, entry.kind))),
         )
 
-    def save(self, path: Path) -> None:
+    def to_bytes(self, path: Path) -> bytes:
         _validate_manifest(self, path)
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "schema_version": self.schema_version,
             "adapter": self.adapter.value,
@@ -73,10 +72,12 @@ class ManagedManifest:
             },
             "entries": [asdict(entry) for entry in self.entries],
         }
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        return (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode()
+
+    def save(self, path: Path) -> None:
+        content = self.to_bytes(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
 
     @classmethod
     def load(

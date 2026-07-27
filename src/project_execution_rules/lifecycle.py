@@ -19,7 +19,13 @@ from project_execution_rules.managed import (
     is_current_managed_file,
     sha256_bytes,
 )
-from project_execution_rules.models import Change, ChangePlan, OperationReport, RuleCatalog
+from project_execution_rules.models import (
+    AdapterId,
+    Change,
+    ChangePlan,
+    OperationReport,
+    RuleCatalog,
+)
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.rendering import render_agents
 from project_execution_rules.transactions import FileTransaction, resolve_target_within_root
@@ -66,10 +72,13 @@ def summarize_update(
             modified.append(domain)
             affected_files.append(str(target))
     deprecated: list[str] = []
-    manifest_path = paths.state_home / "managed-user.json"
+    manifest_path = paths.manifest_path(AdapterId.CODEX)
     from_version: str | None = None
     if manifest_path.is_file():
-        manifest = ManagedManifest.load(manifest_path)
+        manifest = ManagedManifest.load(
+            manifest_path,
+            expected_adapter=AdapterId.CODEX,
+        )
         from_version = manifest.resource_version
         for entry in manifest.entries:
             if (
@@ -254,10 +263,13 @@ def plan_uninstall(
 
 
 def plan_user_uninstall(paths: UserPaths) -> ChangePlan:
-    manifest_path = paths.state_home / "managed-user.json"
+    manifest_path = paths.manifest_path(AdapterId.CODEX)
     if not manifest_path.is_file():
         return ChangePlan(scope="user", changes=())
-    manifest = ManagedManifest.load(manifest_path)
+    manifest = ManagedManifest.load(
+        manifest_path,
+        expected_adapter=AdapterId.CODEX,
+    )
     changes: list[Change] = []
     for entry in manifest.entries:
         target = paths.home / Path(entry.logical_path)
@@ -297,8 +309,9 @@ def apply_lifecycle_plan(
                 change.link_target is None
                 or not is_current_managed_file(
                     change.link_target,
-                    paths_home=paths.home,
-                    manifest_path=paths.state_home / "managed-user.json",
+                    expected_adapter=AdapterId.CODEX,
+                    adapter_home=paths.home,
+                    manifest_path=paths.manifest_path(AdapterId.CODEX),
                 )
             ):
                 raise ProjectRulesError(

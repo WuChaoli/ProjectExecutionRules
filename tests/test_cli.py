@@ -92,7 +92,7 @@ def test_json_mutation_requires_yes_and_returns_one_error_object(tmp_path: Path)
 
 def test_corrupt_managed_manifest_returns_stable_json_error(tmp_path: Path) -> None:
     local = tmp_path / "local"
-    manifest = local / "ProjectExecutionRules" / "managed-user.json"
+    manifest = local / "ProjectExecutionRules" / "managed-user-codex.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text("{broken", encoding="utf-8")
 
@@ -126,7 +126,7 @@ def test_update_stops_when_user_level_update_is_declined(tmp_path: Path) -> None
     security = home / ".agents" / "rules" / "security-rules.md"
     old_content = b"OLD SECURITY RULE\n"
     security.write_bytes(old_content)
-    manifest = local / "ProjectExecutionRules" / "managed-user.json"
+    manifest = local / "ProjectExecutionRules" / "managed-user-codex.json"
     manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
     for entry in manifest_payload["entries"]:
         if entry["logical_path"] == ".agents/rules/security-rules.md":

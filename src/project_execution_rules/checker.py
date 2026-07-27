@@ -12,7 +12,7 @@ from project_execution_rules.catalog import (
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.frontmatter import parse_frontmatter
 from project_execution_rules.managed import ManagedManifest, sha256_bytes
-from project_execution_rules.models import CheckIssue, CheckReport, ProjectState
+from project_execution_rules.models import AdapterId, CheckIssue, CheckReport, ProjectState
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.rendering import route_row
 from project_execution_rules.yaml_utils import (
@@ -50,11 +50,14 @@ def _issue(code: str, message: str, **evidence: object) -> CheckIssue:
 
 
 def _managed_user_issues(paths: UserPaths) -> list[CheckIssue]:
-    manifest_path = paths.state_home / "managed-user.json"
+    manifest_path = paths.manifest_path(AdapterId.CODEX)
     if not manifest_path.is_file():
         return [_issue("MANAGED_MANIFEST_MISSING", "user resource manifest is missing")]
     try:
-        manifest = ManagedManifest.load(manifest_path)
+        manifest = ManagedManifest.load(
+            manifest_path,
+            expected_adapter=AdapterId.CODEX,
+        )
     except (OSError, ValueError, TypeError, KeyError, ProjectRulesError) as error:
         return [_issue("MANAGED_MANIFEST_INVALID", f"user resource manifest is invalid: {error}")]
     issues: list[CheckIssue] = []

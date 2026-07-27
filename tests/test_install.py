@@ -11,6 +11,8 @@ from project_execution_rules.install import (
     plan_user_install,
     plan_user_repair,
 )
+from project_execution_rules.managed import ManagedManifest
+from project_execution_rules.models import AdapterId
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.yaml_utils import as_mapping, as_string, load_mapping
 
@@ -45,7 +47,14 @@ def test_install_creates_canonical_resources_and_manifest(tmp_path: Path) -> Non
 
     assert report.changed
     assert (paths.rules_home / "python-rules.md").is_file()
-    assert (paths.state_home / "managed-user.json").is_file()
+    manifest_path = paths.manifest_path(AdapterId.CODEX)
+    manifest = ManagedManifest.load(manifest_path, expected_adapter=AdapterId.CODEX)
+    assert manifest.adapter is AdapterId.CODEX
+    assert "security" in manifest.selection.rules
+    assert ".agents/rules/security-rules.md" in {
+        entry.logical_path for entry in manifest.entries
+    }
+    assert not (paths.state_home / "managed-user.json").exists()
 
 
 def test_installed_catalog_references_installed_rule_files(tmp_path: Path) -> None:

@@ -22,6 +22,8 @@ from project_execution_rules.lifecycle import (
     rollback_transaction,
     summarize_update,
 )
+from project_execution_rules.managed import ManagedManifest, ManagedSelection
+from project_execution_rules.models import AdapterId
 from project_execution_rules.paths import UserPaths
 
 
@@ -201,12 +203,14 @@ overrides:
 
 def test_user_uninstall_is_a_separate_scope(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    manifest = paths.state_home / "managed-user.json"
-    manifest.parent.mkdir(parents=True)
-    manifest.write_text(
-        '{"resource_version":"1.0.0","entries":[]}\n',
-        encoding="utf-8",
-    )
+    manifest = paths.manifest_path(AdapterId.CODEX)
+    ManagedManifest(
+        schema_version=2,
+        adapter=AdapterId.CODEX,
+        resource_version="1.0.0",
+        selection=ManagedSelection(rules=(), skills=(), agents=()),
+        entries=(),
+    ).save(manifest)
 
     plan = plan_user_uninstall(paths)
 

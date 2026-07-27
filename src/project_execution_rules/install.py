@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
@@ -8,23 +7,30 @@ import yaml
 
 from project_execution_rules.catalog import resource_root
 from project_execution_rules.errors import ProjectRulesError
-from project_execution_rules.managed import ManagedManifest, sha256_bytes
+from project_execution_rules.managed import (
+    ManagedEntry,
+    ManagedManifest,
+    ManagedSelection,
+    sha256_bytes,
+)
 from project_execution_rules.models import (
+    AdapterId,
     Change,
     ChangePlan,
     OperationReport,
     RuleCatalog,
 )
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.selection import resolve_catalog_selection
 from project_execution_rules.transactions import FileTransaction
 from project_execution_rules.yaml_utils import as_mapping, load_mapping
 
 
 def _managed_hashes(paths: UserPaths) -> dict[str, str]:
-    manifest_path = paths.state_home / "managed-user.json"
+    manifest_path = paths.manifest_path(AdapterId.CODEX)
     if not manifest_path.is_file():
         return {}
-    manifest = ManagedManifest.load(manifest_path)
+    manifest = ManagedManifest.load(manifest_path, expected_adapter=AdapterId.CODEX)
     return {entry.logical_path: entry.sha256 for entry in manifest.entries}
 
 
@@ -90,6 +96,14 @@ def _installed_catalog_content(catalog: RuleCatalog) -> bytes:
     return yaml.safe_dump(raw, allow_unicode=True, sort_keys=False).encode()
 
 
+def _resource_kind(target: Path, paths: UserPaths) -> str:
+    if target.is_relative_to(paths.codex_skills):
+        return "skill"
+    if target.is_relative_to(paths.codex_agents):
+        return "agent"
+    return "rule"
+
+
 def _plan_user_resources(
     paths: UserPaths,
     catalog: RuleCatalog,
@@ -98,14 +112,16 @@ def _plan_user_resources(
 ) -> ChangePlan:
     managed = _managed_hashes(paths)
     changes: list[Change] = []
-    entries: list[dict[str, str]] = []
+    entries: list[ManagedEntry] = []
     for change in _resource_changes(paths, catalog):
         logical = change.target.relative_to(paths.home).as_posix()
         desired_hash = sha256_bytes(change.content)
         if change.target.is_file():
             current_hash = sha256_bytes(change.target.read_bytes())
             if current_hash == desired_hash:
-                entries.append({"logical_path": logical, "kind": "file", "sha256": desired_hash})
+                entries.append(
+                    ManagedEntry(logical, _resource_kind(change.target, paths), desired_hash)
+                )
                 continue
             if managed.get(logical) != current_hash and not (
                 allow_managed_drift and logical in managed
@@ -117,19 +133,24 @@ def _plan_user_resources(
                     remediation="Move or rename the conflicting file, then retry.",
                 )
         changes.append(change)
-        entries.append({"logical_path": logical, "kind": "file", "sha256": desired_hash})
-    manifest_content = (
-        json.dumps(
-            {
-                "resource_version": catalog.rules_version,
-                "entries": entries,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n"
-    ).encode()
-    manifest_path = paths.state_home / "managed-user.json"
+        entries.append(ManagedEntry(logical, _resource_kind(change.target, paths), desired_hash))
+    selected = resolve_catalog_selection(
+        catalog,
+        catalog.rules,
+        adapter=AdapterId.CODEX,
+    )
+    manifest_path = paths.manifest_path(AdapterId.CODEX)
+    manifest_content = ManagedManifest(
+        schema_version=2,
+        adapter=AdapterId.CODEX,
+        resource_version=catalog.rules_version,
+        selection=ManagedSelection(
+            rules=selected.rules,
+            skills=selected.skills,
+            agents=selected.agents,
+        ),
+        entries=tuple(entries),
+    ).to_bytes(manifest_path)
     if not manifest_path.is_file() or manifest_path.read_bytes() != manifest_content:
         changes.append(
             Change(
@@ -160,7 +181,11 @@ def install_user_resources(
     if not plan.changes:
         return OperationReport(changed=False, transaction_id=None, changes=())
     common_root = Path(os.path.commonpath([paths.home, paths.state_home]))
-    transaction = FileTransaction(paths.state_home, common_root)
+    transaction = FileTransaction(
+        paths.state_home,
+        common_root,
+        adapter=AdapterId.CODEX,
+    )
     for change in plan.changes:
         transaction.plan_write(change.target, change.content)
 

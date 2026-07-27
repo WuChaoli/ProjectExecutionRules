@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from project_execution_rules.errors import TransactionError
+from project_execution_rules.models import AdapterId
 from project_execution_rules.transactions import FileTransaction
 
 
@@ -40,6 +41,60 @@ def test_successful_transaction_can_be_cleaned_up(tmp_path: Path) -> None:
 
     assert target.read_text(encoding="utf-8") == "schema_version: 1\n"
     assert not transaction.transaction_home.exists()
+
+
+def test_transaction_manifest_persists_optional_adapter(tmp_path: Path) -> None:
+    root = tmp_path / "home"
+    target = root / ".agents" / "rules" / "security-rules.md"
+    transaction = FileTransaction(
+        tmp_path / "state",
+        root,
+        adapter=AdapterId.CODEX,
+    )
+    transaction.plan_write(target, b"rule\n")
+
+    transaction.apply(lambda: target.is_file())
+    manifest = json.loads(
+        (transaction.transaction_home / "manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["adapter"] == "codex"
+
+
+def test_transaction_manifest_omits_adapter_for_non_adapter_operation(tmp_path: Path) -> None:
+    target = tmp_path / "project" / "AGENTS.md"
+    transaction = FileTransaction(tmp_path / "state", tmp_path / "project")
+    transaction.plan_write(target, b"# Project\n")
+
+    transaction.apply(lambda: target.is_file())
+    manifest = json.loads(
+        (transaction.transaction_home / "manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert "adapter" not in manifest
+
+
+def test_restore_rejects_transaction_manifest_for_other_adapter(tmp_path: Path) -> None:
+    root = tmp_path / "home"
+    target = root / ".agents" / "rules" / "security-rules.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("original\n", encoding="utf-8")
+    transaction = FileTransaction(
+        tmp_path / "state",
+        root,
+        adapter=AdapterId.CODEX,
+    )
+    transaction.plan_write(target, b"changed\n")
+    transaction.apply(lambda: target.read_bytes() == b"changed\n")
+    manifest_path = transaction.transaction_home / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["adapter"] = "claude"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(TransactionError, match="Adapter"):
+        transaction.restore()
+
+    assert target.read_bytes() == b"changed\n"
 
 
 def test_transaction_manifest_uses_relative_logical_targets(tmp_path: Path) -> None:
