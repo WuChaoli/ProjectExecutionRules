@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from project_execution_rules.checker import check_project
-from project_execution_rules.models import ProjectState
+from project_execution_rules.errors import ProjectRulesError
+from project_execution_rules.models import AdapterId, CheckReport, ProjectState
 from project_execution_rules.paths import UserPaths
-from project_execution_rules.yaml_utils import load_mapping
+from project_execution_rules.rulesets import load_ruleset
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +17,8 @@ class StatusReport:
     profile: str | None
     rules_version: str | None
     issue_count: int
+    adapters: tuple[AdapterId, ...]
+    adapter_issue_counts: dict[str, int]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -22,23 +26,40 @@ class StatusReport:
             "profile": self.profile,
             "rules_version": self.rules_version,
             "issue_count": self.issue_count,
+            "adapters": [adapter.value for adapter in self.adapters],
+            "adapter_issue_counts": dict(self.adapter_issue_counts),
         }
 
 
-def get_project_status(root: Path, paths: UserPaths) -> StatusReport:
-    check = check_project(root, paths)
-    ruleset = root / ".rules" / "ruleset.yaml"
+CheckRunner = Callable[[Path, UserPaths], object]
+
+
+def get_project_status(
+    root: Path,
+    paths: UserPaths,
+    *,
+    check_runner: Callable[[Path, UserPaths], CheckReport] | None = None,
+) -> StatusReport:
+    resolved = root.resolve()
+    check = (
+        check_project(resolved, paths) if check_runner is None else check_runner(resolved, paths)
+    )
+    ruleset_path = resolved / ".rules" / "ruleset.yaml"
     try:
-        raw = (
-            load_mapping(ruleset.read_text(encoding="utf-8"), name="Rule Set")
-            if ruleset.is_file()
-            else {}
-        )
-    except ValueError:
-        raw = {}
+        ruleset = load_ruleset(ruleset_path) if ruleset_path.is_file() else None
+    except ProjectRulesError:
+        ruleset = None
+    adapters = () if ruleset is None else ruleset.adapters
+    counts = {adapter.value: 0 for adapter in adapters}
+    for issue in check.issues:
+        adapter = issue.evidence.get("adapter")
+        if isinstance(adapter, str) and adapter in counts:
+            counts[adapter] += 1
     return StatusReport(
         state=check.state,
-        profile=str(raw["profile"]) if "profile" in raw else None,
-        rules_version=str(raw["rules_version"]) if "rules_version" in raw else None,
+        profile=None if ruleset is None else ruleset.profile,
+        rules_version=None if ruleset is None else ruleset.rules_version,
         issue_count=len(check.issues),
+        adapters=adapters,
+        adapter_issue_counts=counts,
     )

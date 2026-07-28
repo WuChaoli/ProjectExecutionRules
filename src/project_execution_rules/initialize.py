@@ -5,6 +5,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Protocol
 
 from project_execution_rules.detection import ProjectFacts
 from project_execution_rules.doctor import probe_symlink_capability
@@ -18,6 +19,17 @@ from project_execution_rules.managed import (
 from project_execution_rules.models import AdapterId, Change, ChangePlan, OperationReport
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.transactions import FileTransaction
+
+
+class ResourceSelection(Protocol):
+    @property
+    def rules(self) -> tuple[str, ...]: ...
+
+    @property
+    def skills(self) -> tuple[str, ...]: ...
+
+    @property
+    def agents(self) -> tuple[str, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,27 +66,25 @@ def project_change_required(change: Change) -> bool:
     return True
 
 
-def _expected_manifest_entries(
+def expected_manifest_entries(
     adapter: AdapterId,
-    selection: object,
+    selection: ResourceSelection,
 ) -> dict[str, str]:
-    from project_execution_rules.managed import ManagedSelection
-
-    selected = selection
-    if not isinstance(selected, ManagedSelection):
-        raise TypeError("selection must be ManagedSelection")
+    rules = selection.rules
+    skills = selection.skills
+    agents = selection.agents
     if adapter is AdapterId.CLAUDE:
         return {
-            **{f"rules/{item}.md": "rule" for item in selected.rules},
-            **{f"skills/{item}/SKILL.md": "skill" for item in selected.skills},
-            **{f"agents/{item}.md": "agent" for item in selected.agents},
+            **{f"rules/{item}.md": "rule" for item in rules},
+            **{f"skills/{item}/SKILL.md": "skill" for item in skills},
+            **{f"agents/{item}.md": "agent" for item in agents},
         }
     return {
-        **{f".agents/rules/{item}-rules.md": "rule" for item in selected.rules},
+        **{f".agents/rules/{item}-rules.md": "rule" for item in rules},
         ".agents/rules/catalog.yaml": "rule",
         ".agents/rules/review-report.schema.json": "rule",
-        **{f".codex/skills/{item}/SKILL.md": "skill" for item in selected.skills},
-        **{f".codex/agents/{item}.toml": "agent" for item in selected.agents},
+        **{f".codex/skills/{item}/SKILL.md": "skill" for item in skills},
+        **{f".codex/agents/{item}.toml": "agent" for item in agents},
     }
 
 
@@ -132,11 +142,12 @@ def validate_user_install(
         set(installed_closure.agents),
     )
     actual_selection = (set(selected.rules), set(selected.skills), set(selected.agents))
-    expected_entries = _expected_manifest_entries(adapter, selected)
+    expected_entries = expected_manifest_entries(adapter, selected)
     entries = {entry.logical_path: entry for entry in manifest.entries}
-    if expected_selection != actual_selection or {
-        path: entry.kind for path, entry in entries.items()
-    } != expected_entries:
+    if (
+        expected_selection != actual_selection
+        or {path: entry.kind for path, entry in entries.items()} != expected_entries
+    ):
         raise ProjectRulesError(
             "USER_ADAPTER_CLOSURE_MISMATCH",
             f"installed Adapter manifest is not the exact Catalog closure: {adapter.value}",
