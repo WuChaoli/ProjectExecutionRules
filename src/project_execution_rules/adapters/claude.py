@@ -134,9 +134,7 @@ class ClaudeAdapter:
                         evidence={"target": str(rules_dir)},
                     )
                 target = rules_dir / f"{domain}.project.md"
-                if is_reparse_point(target) or (
-                    target.exists() and not target.is_file()
-                ):
+                if is_reparse_point(target) or (target.exists() and not target.is_file()):
                     raise ProjectRulesError(
                         "PROJECT_OWNERSHIP_CONFLICT",
                         f"Claude Project Rule Extension target is unsafe: {target}",
@@ -198,9 +196,7 @@ class ClaudeAdapter:
                     .render(
                         name=skill_id,
                         description=description,
-                        disable_model_invocation=(
-                            definition.invocation is SkillInvocation.USER
-                        ),
+                        disable_model_invocation=(definition.invocation is SkillInvocation.USER),
                         body=body,
                     )
                     .encode(),

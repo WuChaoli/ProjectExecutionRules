@@ -52,8 +52,8 @@ def resource_root() -> Traversable:
 
 
 def _validate_catalog_schema(raw: dict[str, object]) -> None:
-    schema_text = resource_root().joinpath("schemas/catalog.schema.json").read_text(
-        encoding="utf-8"
+    schema_text = (
+        resource_root().joinpath("schemas/catalog.schema.json").read_text(encoding="utf-8")
     )
     schema = as_mapping(json.loads(schema_text), name="Catalog schema")
     try:
@@ -187,17 +187,13 @@ def _validate_catalog_structure(catalog: RuleCatalog) -> list[CheckIssue]:
         if not _RESOURCE_ID.fullmatch(skill_id) or definition.skill_id != skill_id:
             issues.append(_issue("SKILL_ID_INVALID", f"invalid Skill ID: {skill_id}"))
         if not definition.adapters:
-            issues.append(
-                _issue("SKILL_ADAPTERS_EMPTY", f"Skill {skill_id} supports no Adapter")
-            )
+            issues.append(_issue("SKILL_ADAPTERS_EMPTY", f"Skill {skill_id} supports no Adapter"))
 
     for agent_id, definition in catalog.agents.items():
         if not _RESOURCE_ID.fullmatch(agent_id) or definition.agent_id != agent_id:
             issues.append(_issue("AGENT_ID_INVALID", f"invalid Agent ID: {agent_id}"))
         if not definition.adapters:
-            issues.append(
-                _issue("AGENT_ADAPTERS_EMPTY", f"Agent {agent_id} supports no Adapter")
-            )
+            issues.append(_issue("AGENT_ADAPTERS_EMPTY", f"Agent {agent_id} supports no Adapter"))
         for skill_id in definition.skills:
             skill = catalog.skills.get(skill_id)
             if skill is None:
@@ -249,19 +245,20 @@ def _validate_catalog_structure(catalog: RuleCatalog) -> list[CheckIssue]:
 def _is_safe_resource_file(file: str) -> bool:
     normalized = file.replace("\\", "/")
     parts = normalized.split("/")
-    return bool(normalized) and not normalized.startswith("/") and ".." not in parts and not (
-        len(normalized) >= 2 and normalized[1] == ":"
+    return (
+        bool(normalized)
+        and not normalized.startswith("/")
+        and ".." not in parts
+        and not (len(normalized) >= 2 and normalized[1] == ":")
     )
 
 
 def validate_catalog_resources(catalog: RuleCatalog) -> tuple[CheckIssue, ...]:
     issues = _validate_catalog_structure(catalog)
     resource_files = [
-        ("SKILL_FILE", skill_id, definition.file)
-        for skill_id, definition in catalog.skills.items()
+        ("SKILL_FILE", skill_id, definition.file) for skill_id, definition in catalog.skills.items()
     ] + [
-        ("AGENT_FILE", agent_id, definition.file)
-        for agent_id, definition in catalog.agents.items()
+        ("AGENT_FILE", agent_id, definition.file) for agent_id, definition in catalog.agents.items()
     ]
     resources = resource_root()
     for prefix, resource_id, file in resource_files:
@@ -270,9 +267,7 @@ def validate_catalog_resources(catalog: RuleCatalog) -> tuple[CheckIssue, ...]:
                 _issue(f"{prefix}_INVALID", f"invalid resource file for {resource_id}: {file}")
             )
         elif not resources.joinpath(file).is_file():
-            issues.append(
-                _issue(f"{prefix}_MISSING", f"missing resource file for {resource_id}")
-            )
+            issues.append(_issue(f"{prefix}_MISSING", f"missing resource file for {resource_id}"))
     seen_ids: dict[str, str] = {}
     always_bytes = 0
     root = resource_root().joinpath("rules")

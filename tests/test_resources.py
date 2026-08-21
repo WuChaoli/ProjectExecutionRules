@@ -17,9 +17,9 @@ def test_builtin_rules_use_stable_contract_sections() -> None:
     for definition in catalog.rules.values():
         text = resource_root().joinpath("rules", definition.file).read_text(encoding="utf-8")
         _, body = parse_frontmatter(text)
-        assert all(
-            section in body for section in ("## WHEN", "## MUST", "## MUST NOT")
-        ), definition.domain
+        assert all(section in body for section in ("## WHEN", "## MUST", "## MUST NOT")), (
+            definition.domain
+        )
         assert not any(
             heading in body
             for heading in ("## 事实来源", "## 执行规则", "## 验证要求", "## 职责边界")
@@ -51,13 +51,13 @@ def test_task_and_explicit_rules_describe_dependencies() -> None:
 
 def test_pull_request_rule_preserves_pr_002_clause() -> None:
     catalog = load_builtin_catalog()
-    text = resource_root().joinpath("rules", catalog.rules["pull-request"].file).read_text(
-        encoding="utf-8"
+    text = (
+        resource_root()
+        .joinpath("rules", catalog.rules["pull-request"].file)
+        .read_text(encoding="utf-8")
     )
 
     assert "- `PR-002`：PR 描述必须说明范围、验证证据、风险和未确认边界。" in text
-
-
 
     catalog = load_builtin_catalog()
 

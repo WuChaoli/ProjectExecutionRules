@@ -93,9 +93,11 @@ def test_ruleset_rejects_profile_rule_in_core_domains() -> None:
 
 
 def test_ruleset_rejects_core_rule_in_profile_domains() -> None:
-    text = _VALID_RULESET.replace("  core:\n    - security", "  core: []").replace(
-        "  profile:\n    - python", "  profile:\n    - security"
-    ).replace("    - python\n  claude", "    - security\n  claude")
+    text = (
+        _VALID_RULESET.replace("  core:\n    - security", "  core: []")
+        .replace("  profile:\n    - python", "  profile:\n    - security")
+        .replace("    - python\n  claude", "    - security\n  claude")
+    )
 
     with pytest.raises(ProjectRulesError, match="domains.profile"):
         load_ruleset_text(text)

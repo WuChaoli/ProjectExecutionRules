@@ -69,13 +69,10 @@ def test_catalog_validation_rejects_agent_skill_self_reference() -> None:
     codes = {issue.code for issue in validate_catalog_resources(catalog)}
     assert "AGENT_SKILL_SELF_REFERENCE" in codes
 
-
-
     catalog = load_builtin_catalog()
     issues = validate_catalog_resources(catalog)
 
     assert not any(issue.code == "AGENT_SKILL_INVOCATION_INVALID" for issue in issues)
-
 
     catalog = load_builtin_catalog()
 
@@ -104,8 +101,6 @@ def test_builtin_catalog_has_expected_dependency_contracts() -> None:
         for agent_id in catalog.agents
         for skill_id in ("agent-governance", "tool-governance", "rules-reviewer")
     )
-
-
 
     catalog = load_builtin_catalog()
 

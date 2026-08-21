@@ -45,10 +45,7 @@ def test_claude_install_plan_never_manages_global_claude_md(tmp_path: Path) -> N
 
     plan = get_adapter(AdapterId.CLAUDE).plan_install(paths, catalog, selection)
 
-    assert paths.claude_home / "CLAUDE.md" not in {
-        change.target for change in plan.changes
-    }
-
+    assert paths.claude_home / "CLAUDE.md" not in {change.target for change in plan.changes}
 
     paths = _paths(tmp_path)
 
@@ -76,9 +73,7 @@ def test_install_creates_canonical_resources_and_manifest(tmp_path: Path) -> Non
     manifest = ManagedManifest.load(manifest_path, expected_adapter=AdapterId.CODEX)
     assert manifest.adapter is AdapterId.CODEX
     assert "security" in manifest.selection.rules
-    assert ".agents/rules/security-rules.md" in {
-        entry.logical_path for entry in manifest.entries
-    }
+    assert ".agents/rules/security-rules.md" in {entry.logical_path for entry in manifest.entries}
     assert not (paths.state_home / "managed-user.json").exists()
 
 

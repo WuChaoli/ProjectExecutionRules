@@ -99,9 +99,7 @@ def load_ruleset_text(text: str) -> RuleSet:
         raise _invalid(f"unknown Rule domain: {', '.join(sorted(unknown_domains))}")
     if profile not in catalog.profiles:
         raise _invalid(f"unknown profile: {profile}")
-    core_rule_ids = {
-        domain for domain, definition in catalog.rules.items() if definition.core
-    }
+    core_rule_ids = {domain for domain, definition in catalog.rules.items() if definition.core}
     if not set(core_domains) <= core_rule_ids:
         raise _invalid("domains.core must contain only Catalog core Rules")
     profile_rule_ids = set(catalog.profiles[profile])
@@ -117,9 +115,7 @@ def load_ruleset_text(text: str) -> RuleSet:
             if len(set(adapter_overrides)) != len(adapter_overrides):
                 raise ValueError(f"{adapter.value} Overrides contain duplicate values")
             if not set(adapter_overrides) <= selected_domains:
-                raise ValueError(
-                    f"{adapter.value} Override must reference a selected domain"
-                )
+                raise ValueError(f"{adapter.value} Override must reference a selected domain")
             overrides[adapter] = adapter_overrides
     except ValueError as error:
         raise _invalid(str(error)) from error
@@ -149,8 +145,7 @@ def render_ruleset(ruleset: RuleSet) -> str:
             "profile": list(ruleset.profile_domains),
         },
         "overrides": {
-            adapter.value: list(ruleset.overrides.get(adapter, ()))
-            for adapter in ruleset.adapters
+            adapter.value: list(ruleset.overrides.get(adapter, ())) for adapter in ruleset.adapters
         },
     }
     return yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)

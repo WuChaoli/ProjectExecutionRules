@@ -45,8 +45,7 @@ class CodexAdapter:
             selection=selection,
             changes=changes,
             resource_kind={
-                change.target: self._resource_kind(change.target, paths)
-                for change in changes
+                change.target: self._resource_kind(change.target, paths) for change in changes
             },
             scope="user:codex",
             allow_managed_drift=allow_managed_drift,
@@ -86,9 +85,7 @@ class CodexAdapter:
         for domain in domains:
             if domain not in catalog.rules:
                 raise ProjectRulesError("RULE_UNKNOWN", f"unknown Rule domain: {domain}")
-            if verify_user_install and not (
-                paths.rules_home / f"{domain}-rules.md"
-            ).is_file():
+            if verify_user_install and not (paths.rules_home / f"{domain}-rules.md").is_file():
                 raise ProjectRulesError(
                     "USER_RULE_MISSING",
                     f"user Rule is not installed: {domain}",

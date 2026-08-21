@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -178,7 +179,11 @@ def _snapshot_files(root: Path) -> dict[str, bytes]:
 
 def test_init_preserves_installed_user_resources(tmp_path: Path) -> None:
     root = tmp_path / "project"
-    (root / ".git").mkdir(parents=True)
+    root.mkdir()
+    subprocess.run(
+        ["git", "init", "--quiet", str(root)],
+        check=True,
+    )
     (root / "pyproject.toml").write_text("[project]\nname='sample'\n", encoding="utf-8")
     home = tmp_path / "home"
     local = tmp_path / "local"

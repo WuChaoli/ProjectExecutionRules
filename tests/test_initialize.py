@@ -80,9 +80,7 @@ def test_init_plan_has_exact_links_and_no_empty_overrides(tmp_path: Path) -> Non
     assert "testing-rules.override.md" not in targets
     assert "ruleset.yaml" in targets
     assert "AGENTS.md" in targets
-    ruleset_change = next(
-        change for change in plan.changes if change.target.name == "ruleset.yaml"
-    )
+    ruleset_change = next(change for change in plan.changes if change.target.name == "ruleset.yaml")
     ruleset = load_ruleset_text(ruleset_change.content.decode())
     assert ruleset.adapters == (AdapterId.CODEX,)
     assert ruleset.overrides == {AdapterId.CODEX: ("python",)}

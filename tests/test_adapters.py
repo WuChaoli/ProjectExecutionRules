@@ -56,21 +56,15 @@ def test_codex_adapter_plans_real_install_targets(tmp_path: Path) -> None:
 
     targets = {change.target for change in plan.changes}
     manifest_change = next(
-        change
-        for change in plan.changes
-        if change.target == paths.manifest_path(AdapterId.CODEX)
+        change for change in plan.changes if change.target == paths.manifest_path(AdapterId.CODEX)
     )
     manifest = json.loads(manifest_change.content)
     entries = manifest["entries"]
     skill_entries = {
-        Path(entry["logical_path"]).parent.name
-        for entry in entries
-        if entry["kind"] == "skill"
+        Path(entry["logical_path"]).parent.name for entry in entries if entry["kind"] == "skill"
     }
     agent_entries = {
-        Path(entry["logical_path"]).stem
-        for entry in entries
-        if entry["kind"] == "agent"
+        Path(entry["logical_path"]).stem for entry in entries if entry["kind"] == "agent"
     }
 
     assert plan.scope == "user:codex"
@@ -80,13 +74,9 @@ def test_codex_adapter_plans_real_install_targets(tmp_path: Path) -> None:
     assert skill_entries == set(manifest["selection"]["skills"])
     assert agent_entries == set(manifest["selection"]["agents"])
     assert all(
-        paths.codex_skills / skill_id / "SKILL.md" in targets
-        for skill_id in selection.skills
+        paths.codex_skills / skill_id / "SKILL.md" in targets for skill_id in selection.skills
     )
-    assert all(
-        paths.codex_agents / f"{agent_id}.toml" in targets
-        for agent_id in selection.agents
-    )
+    assert all(paths.codex_agents / f"{agent_id}.toml" in targets for agent_id in selection.agents)
 
 
 def test_codex_adapter_rejects_missing_skill_resource(tmp_path: Path) -> None:
@@ -155,9 +145,7 @@ def test_codex_adapter_plans_base_links_and_guide(tmp_path: Path) -> None:
     paths = UserPaths.from_environment({}, tmp_path / "home")
     (paths.rules_home).mkdir(parents=True)
     for domain in ("security", "python"):
-        (paths.rules_home / f"{domain}-rules.md").write_text(
-            f"{domain}\n", encoding="utf-8"
-        )
+        (paths.rules_home / f"{domain}-rules.md").write_text(f"{domain}\n", encoding="utf-8")
 
     plan = get_adapter(AdapterId.CODEX).plan_project_init(
         root,

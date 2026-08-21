@@ -44,11 +44,7 @@ def _install_claude(tmp_path: Path) -> UserPaths:
 
 
 def _content(plan: ChangePlan, target: Path) -> str:
-    return next(
-        change.content.decode()
-        for change in plan.changes
-        if change.target == target
-    )
+    return next(change.content.decode() for change in plan.changes if change.target == target)
 
 
 def test_claude_adapter_is_registered_as_real_adapter() -> None:
@@ -142,9 +138,7 @@ def test_claude_agent_rendering_preloads_only_model_invocable_skills(
     )
     plan = get_adapter(AdapterId.CLAUDE).plan_install(paths, catalog, selection)
 
-    metadata, body = parse_frontmatter(
-        _content(plan, paths.claude_agents / "rules-reviewer.md")
-    )
+    metadata, body = parse_frontmatter(_content(plan, paths.claude_agents / "rules-reviewer.md"))
 
     assert metadata["name"] == "rules-reviewer"
     assert isinstance(metadata["description"], str)
@@ -167,9 +161,7 @@ def test_claude_agent_without_preloads_renders_empty_skills_list(tmp_path: Path)
     )
 
     plan = get_adapter(AdapterId.CLAUDE).plan_install(paths, catalog, selection)
-    metadata, _ = parse_frontmatter(
-        _content(plan, paths.claude_agents / "rules-reviewer.md")
-    )
+    metadata, _ = parse_frontmatter(_content(plan, paths.claude_agents / "rules-reviewer.md"))
 
     assert metadata["skills"] == []
 
@@ -190,10 +182,7 @@ def test_claude_install_is_deterministic_and_uses_only_regular_writes(
     second = adapter.plan_install(paths, catalog, selection)
 
     assert first == second
-    assert all(
-        change.action == "write" and change.link_target is None
-        for change in first.changes
-    )
+    assert all(change.action == "write" and change.link_target is None for change in first.changes)
 
 
 def test_claude_manifest_selection_and_entries_match_planned_closure(
@@ -208,9 +197,7 @@ def test_claude_manifest_selection_and_entries_match_planned_closure(
     )
     plan = get_adapter(AdapterId.CLAUDE).plan_install(paths, catalog, selection)
     manifest_change = next(
-        change
-        for change in plan.changes
-        if change.target == paths.manifest_path(AdapterId.CLAUDE)
+        change for change in plan.changes if change.target == paths.manifest_path(AdapterId.CLAUDE)
     )
     manifest_change.target.parent.mkdir(parents=True)
     manifest_change.target.write_bytes(manifest_change.content)
@@ -229,9 +216,7 @@ def test_claude_manifest_selection_and_entries_match_planned_closure(
         "agents/rules-reviewer.md",
     }
     for entry in manifest.entries:
-        assert paths.claude_home.joinpath(entry.logical_path).is_relative_to(
-            paths.claude_home
-        )
+        assert paths.claude_home.joinpath(entry.logical_path).is_relative_to(paths.claude_home)
 
 
 @pytest.mark.parametrize(
@@ -555,9 +540,7 @@ def test_claude_project_init_rejects_manifest_missing_selected_entry(
     manifest_path = paths.manifest_path(AdapterId.CLAUDE)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["entries"] = [
-        entry
-        for entry in manifest["entries"]
-        if entry["logical_path"] != "rules/security.md"
+        entry for entry in manifest["entries"] if entry["logical_path"] != "rules/security.md"
     ]
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
@@ -587,9 +570,7 @@ def test_claude_project_init_rejects_non_exact_global_closure(
         manifest["selection"]["rules"].append("unknown-rule")
     elif corruption == "wrong-kind":
         entry = next(
-            item
-            for item in manifest["entries"]
-            if item["logical_path"] == "rules/security.md"
+            item for item in manifest["entries"] if item["logical_path"] == "rules/security.md"
         )
         entry["kind"] = "skill"
     else:

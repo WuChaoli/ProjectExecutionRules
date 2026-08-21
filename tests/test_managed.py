@@ -164,9 +164,9 @@ def test_is_current_managed_file_checks_adapter_root_and_symlink(tmp_path: Path)
     target.parent.mkdir(parents=True)
     target.write_bytes(b"security")
     manifest_path = tmp_path / "state" / "managed-user-claude.json"
-    _manifest(
-        ManagedEntry("rules/security.md", "rule", sha256_bytes(target.read_bytes()))
-    ).save(manifest_path)
+    _manifest(ManagedEntry("rules/security.md", "rule", sha256_bytes(target.read_bytes()))).save(
+        manifest_path
+    )
 
     assert is_current_managed_file(
         target,

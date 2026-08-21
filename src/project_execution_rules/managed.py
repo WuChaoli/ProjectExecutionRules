@@ -68,9 +68,7 @@ def build_managed_install_plan(
                 )
             current_hash = sha256_bytes(change.target.read_bytes())
             if current_hash == desired_hash:
-                entries.append(
-                    ManagedEntry(logical, resource_kind[change.target], desired_hash)
-                )
+                entries.append(ManagedEntry(logical, resource_kind[change.target], desired_hash))
                 continue
             if managed.get(logical) != current_hash and not (
                 allow_managed_drift and logical in managed
@@ -274,9 +272,7 @@ def is_safe_adapter_path(target: Path, *, adapter_home: Path) -> bool:
         return False
 
     try:
-        lexical_target.parent.resolve(strict=False).relative_to(
-            lexical_home.resolve(strict=False)
-        )
+        lexical_target.parent.resolve(strict=False).relative_to(lexical_home.resolve(strict=False))
         return True
     except (OSError, ValueError):
         return False
@@ -302,9 +298,9 @@ def is_current_managed_file(
     if not is_safe_adapter_file(target, adapter_home=adapter_home) or not manifest_path.is_file():
         return False
     try:
-        logical = target.resolve(strict=True).relative_to(
-            adapter_home.resolve(strict=True)
-        ).as_posix()
+        logical = (
+            target.resolve(strict=True).relative_to(adapter_home.resolve(strict=True)).as_posix()
+        )
         manifest = ManagedManifest.load(
             manifest_path,
             expected_adapter=expected_adapter,

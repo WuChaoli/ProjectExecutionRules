@@ -31,7 +31,6 @@ def test_v2_resource_definitions_are_typed() -> None:
     assert skill.invocation is SkillInvocation.MODEL
     assert agent.adapters == (AdapterId.CLAUDE,)
 
-
     with pytest.raises(ValueError, match="project-relative"):
         RuleDefinition(
             domain="python",
