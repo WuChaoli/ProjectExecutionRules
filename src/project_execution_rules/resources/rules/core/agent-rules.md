@@ -1,19 +1,20 @@
 # Agent Rules
 
-## 事实来源
+## WHEN
 
 - `AGT-001`：Agent 角色、权限、上下文和工具能力必须以实际定义为准。
 
-## 执行规则
+## MUST
 
 - `AGT-002`：角色必须声明职责、输入、输出、停止条件和不负责范围。
 - `AGT-003`：实现者不得担任最终独立审查者。
 - `AGT-004`：并发执行者必须声明文件所有权且不得回退他人修改。
+- Invoke the Catalog-declared `agent-governance` Skill for explicit agent-governance commands。
 
-## 验证要求
+## MUST
 
 - `AGT-005`：Agent 变更必须验证定义语法、权限边界和真实调用结果。
 
-## 职责边界
+## MUST NOT
 
 工具来源与生命周期由 Tool Rules 管理。

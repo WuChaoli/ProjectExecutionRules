@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from project_execution_rules.errors import TransactionError
+from project_execution_rules.models import AdapterId
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,11 +61,13 @@ class FileTransaction:
         state_home: Path,
         authorized_root: Path,
         *,
+        adapter: AdapterId | str | None = None,
         symlink_factory: Callable[[str, Path], None] = os.symlink,
     ) -> None:
         self.state_home = state_home.resolve()
         self.lexical_root = Path(os.path.abspath(authorized_root))
         self.authorized_root = authorized_root.resolve()
+        self.adapter = AdapterId(adapter) if adapter is not None else None
         self.transaction_id = uuid.uuid4().hex
         self.transaction_home = self.state_home / "transactions" / self.transaction_id
         self.backup_home = self.state_home / "backups" / self.transaction_id
@@ -161,10 +164,35 @@ class FileTransaction:
             "originals": [asdict(item) for item in originals],
             "status": "backed_up",
         }
+        if self.adapter is not None:
+            payload["adapter"] = self.adapter.value
         (self.transaction_home / "manifest.json").write_text(
             json.dumps(payload, indent=2) + "\n",
             encoding="utf-8",
         )
+
+    def _validate_manifest_adapter(self) -> None:
+        if self.adapter is None:
+            return
+        manifest_path = self.transaction_home / "manifest.json"
+        try:
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            actual = AdapterId(raw["adapter"])
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            raise TransactionError(
+                "TRANSACTION_ADAPTER_INVALID",
+                f"transaction Adapter metadata is invalid: {manifest_path}",
+                evidence={"expected_adapter": self.adapter.value},
+            ) from error
+        if actual is not self.adapter:
+            raise TransactionError(
+                "TRANSACTION_ADAPTER_MISMATCH",
+                f"transaction belongs to Adapter {actual.value}, not {self.adapter.value}",
+                evidence={
+                    "expected_adapter": self.adapter.value,
+                    "actual_adapter": actual.value,
+                },
+            )
 
     @staticmethod
     def _unlink_file(target: Path) -> None:
@@ -193,6 +221,7 @@ class FileTransaction:
                 )
 
     def restore(self) -> None:
+        self._validate_manifest_adapter()
         for original in reversed(self._originals):
             target = self._target_path(original.target)
             self._unlink_file(target)

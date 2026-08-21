@@ -13,6 +13,16 @@ class ActivationType(StrEnum):
     EXPLICIT = "explicit"
 
 
+class AdapterId(StrEnum):
+    CODEX = "codex"
+    CLAUDE = "claude"
+
+
+class SkillInvocation(StrEnum):
+    MODEL = "model"
+    USER = "user"
+
+
 class ProjectState(StrEnum):
     UNMANAGED = "unmanaged"
     PLANNED = "planned"
@@ -69,6 +79,22 @@ class OperationReport:
 
 
 @dataclass(frozen=True, slots=True)
+class SkillDefinition:
+    skill_id: str
+    file: str
+    invocation: SkillInvocation
+    adapters: tuple[AdapterId, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentDefinition:
+    agent_id: str
+    file: str
+    skills: tuple[str, ...]
+    adapters: tuple[AdapterId, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RuleDefinition:
     domain: str
     file: str
@@ -76,14 +102,29 @@ class RuleDefinition:
     paths: tuple[str, ...] = ()
     tasks: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
+    skills: tuple[str, ...] = ()
+    agents: tuple[str, ...] = ()
     core: bool = True
     required: bool = False
 
     def __post_init__(self) -> None:
         if not self.domain or "/" in self.domain or "\\" in self.domain:
             raise ValueError("domain must be a simple identifier")
-        if self.activation is ActivationType.PATHS and not self.paths:
-            raise ValueError("paths activation requires paths")
+        fields = (self.paths, self.tasks, self.commands)
+        if self.activation is ActivationType.ALWAYS and any(fields):
+            raise ValueError("always activation cannot declare triggers")
+        if self.activation is ActivationType.PATHS and (
+            not self.paths or self.tasks or self.commands
+        ):
+            raise ValueError("paths activation requires paths and no other triggers")
+        if self.activation is ActivationType.TASK and (
+            not self.tasks or self.paths or self.commands
+        ):
+            raise ValueError("task activation requires tasks and no other triggers")
+        if self.activation is ActivationType.EXPLICIT and (
+            not self.commands or self.paths or self.tasks
+        ):
+            raise ValueError("explicit activation requires commands and no other triggers")
         for pattern in self.paths:
             normalized = pattern.replace("\\", "/")
             path = PurePosixPath(normalized)
@@ -102,17 +143,21 @@ class RuleCatalog:
     rules_version: str
     rules: dict[str, RuleDefinition]
     profiles: dict[str, tuple[str, ...]]
+    skills: dict[str, SkillDefinition]
+    agents: dict[str, AgentDefinition]
 
 
 @dataclass(frozen=True, slots=True)
 class RuleSet:
     schema_version: int
     rules_version: str
-    adapter: str
+    adapters: tuple[AdapterId, ...]
     profile: str
     core_domains: tuple[str, ...]
     profile_domains: tuple[str, ...]
-    overrides: tuple[str, ...] = ()
+    overrides: dict[AdapterId, tuple[str, ...]] = field(
+        default_factory=lambda: dict[AdapterId, tuple[str, ...]]()
+    )
 
     @property
     def domains(self) -> tuple[str, ...]:

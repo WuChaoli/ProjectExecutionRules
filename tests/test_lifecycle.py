@@ -22,7 +22,10 @@ from project_execution_rules.lifecycle import (
     rollback_transaction,
     summarize_update,
 )
+from project_execution_rules.managed import ManagedManifest, ManagedSelection
+from project_execution_rules.models import AdapterId, Change, ChangePlan
 from project_execution_rules.paths import UserPaths
+from project_execution_rules.transactions import FileTransaction
 
 
 def _paths(tmp_path: Path) -> UserPaths:
@@ -65,9 +68,10 @@ def test_repair_plan_only_targets_managed_structure(tmp_path: Path) -> None:
     rules = root / ".rules"
     rules.mkdir(parents=True)
     (rules / "ruleset.yaml").write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 1.0.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
@@ -75,7 +79,8 @@ domains:
   profile:
     - python
 overrides:
-  - python
+  codex:
+    - python
 """,
         encoding="utf-8",
     )
@@ -100,15 +105,17 @@ def test_project_repair_refuses_missing_user_rule(tmp_path: Path) -> None:
     rules = root / ".rules"
     rules.mkdir(parents=True)
     (rules / "ruleset.yaml").write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 1.0.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
     - security
   profile: []
-overrides: []
+overrides:
+  codex: []
 """,
         encoding="utf-8",
     )
@@ -124,9 +131,10 @@ def test_uninstall_preserves_overrides(tmp_path: Path) -> None:
     rules = root / ".rules"
     rules.mkdir(parents=True)
     (rules / "ruleset.yaml").write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 1.0.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
@@ -134,7 +142,8 @@ domains:
   profile:
     - python
 overrides:
-  - python
+  codex:
+    - python
 """,
         encoding="utf-8",
     )
@@ -152,15 +161,17 @@ def test_uninstall_refuses_regular_file_in_managed_link_slot(tmp_path: Path) -> 
     rules = root / ".rules"
     rules.mkdir(parents=True)
     (rules / "ruleset.yaml").write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 1.0.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
     - security
   profile: []
-overrides: []
+overrides:
+  codex: []
 """,
         encoding="utf-8",
     )
@@ -176,9 +187,10 @@ def test_project_update_changes_only_declared_rules_version(tmp_path: Path) -> N
     rules.mkdir(parents=True)
     ruleset = rules / "ruleset.yaml"
     ruleset.write_text(
-        """schema_version: 1
+        """schema_version: 2
 rules_version: 0.9.0
-adapter: codex
+adapters:
+  - codex
 profile: python
 domains:
   core:
@@ -186,7 +198,8 @@ domains:
   profile:
     - python
 overrides:
-  - python
+  codex:
+    - python
 """,
         encoding="utf-8",
     )
@@ -196,22 +209,125 @@ overrides:
     assert len(plan.changes) == 1
     content = plan.changes[0].content.decode()
     assert "rules_version: 1.0.0" in content
-    assert "overrides:\n- python" in content
+    assert "overrides:\n  codex:\n  - python" in content
 
 
 def test_user_uninstall_is_a_separate_scope(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    manifest = paths.state_home / "managed-user.json"
-    manifest.parent.mkdir(parents=True)
-    manifest.write_text(
-        '{"resource_version":"1.0.0","entries":[]}\n',
-        encoding="utf-8",
-    )
+    manifest = paths.manifest_path(AdapterId.CODEX)
+    ManagedManifest(
+        schema_version=2,
+        adapter=AdapterId.CODEX,
+        resource_version="1.0.0",
+        selection=ManagedSelection(rules=(), skills=(), agents=()),
+        entries=(),
+    ).save(manifest)
 
     plan = plan_user_uninstall(paths)
 
     assert plan.scope == "user"
     assert {change.target for change in plan.changes} == {manifest}
+
+
+def _write_restore_transaction(
+    paths: UserPaths,
+    *,
+    root: Path,
+    target: Path,
+    adapter: object = None,
+    include_adapter: bool = False,
+) -> None:
+    transaction_home = paths.transactions_home / "deadbeef"
+    backup_home = paths.backups_home / "deadbeef"
+    transaction_home.mkdir(parents=True)
+    backup_home.mkdir(parents=True)
+    backup = backup_home / "0.bin"
+    backup.write_bytes(b"original\n")
+    payload: dict[str, object] = {
+        "authorized_root": str(root),
+        "originals": [
+            {
+                "target": target.relative_to(root).as_posix(),
+                "kind": "file",
+                "backup": str(backup),
+                "link_target": "",
+            }
+        ],
+    }
+    if include_adapter:
+        payload["adapter"] = adapter
+    (transaction_home / "manifest.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    ("adapter", "include_adapter"),
+    (("claude", True), (None, False), ("invalid", True)),
+)
+def test_adapter_rollback_rejects_bad_metadata_before_modifying_target(
+    tmp_path: Path,
+    adapter: object,
+    include_adapter: bool,
+) -> None:
+    root = tmp_path / "home"
+    root.mkdir()
+    target = root / "managed.md"
+    target.write_text("changed\n", encoding="utf-8")
+    paths = _paths(tmp_path)
+    _write_restore_transaction(
+        paths,
+        root=root,
+        target=target,
+        adapter=adapter,
+        include_adapter=include_adapter,
+    )
+
+    with pytest.raises(ProjectRulesError, match="Adapter"):
+        rollback_transaction(paths, "deadbeef", expected_adapter=AdapterId.CODEX)
+
+    assert target.read_text(encoding="utf-8") == "changed\n"
+
+
+def test_non_adapter_rollback_allows_legacy_manifest_without_adapter(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    target = root / "AGENTS.md"
+    target.write_text("changed\n", encoding="utf-8")
+    paths = _paths(tmp_path)
+    _write_restore_transaction(paths, root=root, target=target)
+
+    rollback_transaction(paths, "deadbeef")
+
+    assert target.read_text(encoding="utf-8") == "original\n"
+
+
+def test_user_lifecycle_transaction_persists_codex_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    target = paths.rules_home / "security-rules.md"
+    plan = ChangePlan(
+        scope="user",
+        changes=(Change(action="write", target=target, content=b"rule\n"),),
+    )
+
+    def preserve_transaction(_: FileTransaction) -> None:
+        return None
+
+    monkeypatch.setattr(FileTransaction, "cleanup", preserve_transaction)
+
+    report = apply_lifecycle_plan(plan, tmp_path / "project", paths, confirmed=True)
+    assert report.transaction_id is not None
+    raw = json.loads(
+        (paths.transactions_home / report.transaction_id / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert raw["adapter"] == "codex"
 
 
 def test_rollback_rejects_unknown_transaction(tmp_path: Path) -> None:

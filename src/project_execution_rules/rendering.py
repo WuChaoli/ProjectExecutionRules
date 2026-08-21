@@ -5,7 +5,7 @@ import yaml
 from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.detection import ProjectFacts
 from project_execution_rules.initialize import ProjectSelection
-from project_execution_rules.models import ActivationType, RuleDefinition
+from project_execution_rules.models import ActivationType, AdapterId, RuleDefinition
 
 _EXPLICIT_ENTRIES = {
     "agent-governance": "Codex Skill `$agent-governance`",
@@ -86,24 +86,28 @@ def render_agents(selection: ProjectSelection) -> str:
 """
 
 
-def render_ruleset(selection: ProjectSelection) -> str:
-    catalog = load_builtin_catalog()
-    core = "\n".join(f"    - {domain}" for domain in selection.core_domains)
-    overrides = "\n".join(f"  - {domain}" for domain in selection.override_domains)
-    return f"""schema_version: 1
-rules_version: {catalog.rules_version}
-adapter: codex
-profile: python
+def render_ruleset(
+    selection: ProjectSelection,
+    *,
+    adapters: tuple[AdapterId, ...] = (AdapterId.CODEX,),
+) -> str:
+    from project_execution_rules.adapters.codex import render_project_ruleset
 
-domains:
-  core:
-{core}
-  profile:
-    - python
+    return render_project_ruleset(selection, adapters=adapters)
 
-overrides:
-{overrides if overrides else "  []"}
-"""
+
+def render_python_project_extension(facts: ProjectFacts) -> str:
+    lines = ["# Python Project Rule Extensions", ""]
+    if facts.python_requirement:
+        lines.append(
+            f"- 项目 Python 版本要求为 `{facts.python_requirement}`；不得降低 Base Rule 要求。"
+        )
+    if facts.package_manager != "unknown":
+        lines.append(f"- 项目依赖与命令使用 `{facts.package_manager}`。")
+    if facts.source_dirs:
+        joined = "、".join(f"`{item}/`" for item in facts.source_dirs)
+        lines.append(f"- 项目源码入口为 {joined}。")
+    return "\n".join(lines).rstrip() + "\n" if len(lines) > 2 else ""
 
 
 def render_python_override(facts: ProjectFacts) -> str:

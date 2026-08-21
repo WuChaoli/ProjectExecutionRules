@@ -1,12 +1,120 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["schema_version", "rules_version", "profiles", "rules"],
+  "required": ["schema_version", "rules_version", "profiles", "skills", "agents", "rules"],
   "properties": {
-    "schema_version": {"const": 1},
-    "rules_version": {"type": "string"},
-    "profiles": {"type": "object"},
-    "rules": {"type": "object"}
+    "schema_version": {"const": 2},
+    "rules_version": {"type": "string", "minLength": 1},
+    "profiles": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/resourceId"},
+      "additionalProperties": {"$ref": "#/$defs/idList"}
+    },
+    "skills": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/resourceId"},
+      "additionalProperties": {"$ref": "#/$defs/skill"}
+    },
+    "agents": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/resourceId"},
+      "additionalProperties": {"$ref": "#/$defs/agent"}
+    },
+    "rules": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/resourceId"},
+      "additionalProperties": {"$ref": "#/$defs/rule"}
+    }
+  },
+  "$defs": {
+    "resourceId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "resourceFile": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "idList": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/resourceId"},
+      "uniqueItems": true
+    },
+    "adapterList": {
+      "type": "array",
+      "items": {"enum": ["codex", "claude"]},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "skill": {
+      "type": "object",
+      "required": ["file", "invocation", "adapters"],
+      "properties": {
+        "file": {"$ref": "#/$defs/resourceFile"},
+        "invocation": {"enum": ["model", "user"]},
+        "adapters": {"$ref": "#/$defs/adapterList"}
+      },
+      "additionalProperties": false
+    },
+    "agent": {
+      "type": "object",
+      "required": ["file", "skills", "adapters"],
+      "properties": {
+        "file": {"$ref": "#/$defs/resourceFile"},
+        "skills": {"$ref": "#/$defs/idList"},
+        "adapters": {"$ref": "#/$defs/adapterList"}
+      },
+      "additionalProperties": false
+    },
+    "rule": {
+      "type": "object",
+      "required": ["file", "activation"],
+      "properties": {
+        "file": {"$ref": "#/$defs/resourceFile"},
+        "activation": {"enum": ["always", "paths", "task", "explicit"]},
+        "paths": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "tasks": {"$ref": "#/$defs/idList"},
+        "commands": {"$ref": "#/$defs/idList"},
+        "skills": {"$ref": "#/$defs/idList"},
+        "agents": {"$ref": "#/$defs/idList"},
+        "core": {"type": "boolean"},
+        "required": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"activation": {"const": "always"}}, "required": ["activation"]},
+          "then": {"not": {"anyOf": [
+            {"required": ["paths"]}, {"required": ["tasks"]}, {"required": ["commands"]}
+          ]}}
+        },
+        {
+          "if": {"properties": {"activation": {"const": "paths"}}, "required": ["activation"]},
+          "then": {
+            "required": ["paths"],
+            "properties": {"paths": {"minItems": 1}},
+            "not": {"anyOf": [{"required": ["tasks"]}, {"required": ["commands"]}]}
+          }
+        },
+        {
+          "if": {"properties": {"activation": {"const": "task"}}, "required": ["activation"]},
+          "then": {
+            "required": ["tasks"],
+            "properties": {"tasks": {"minItems": 1}},
+            "not": {"anyOf": [{"required": ["paths"]}, {"required": ["commands"]}]}
+          }
+        },
+        {
+          "if": {"properties": {"activation": {"const": "explicit"}}, "required": ["activation"]},
+          "then": {
+            "required": ["commands"],
+            "properties": {"commands": {"minItems": 1}},
+            "not": {"anyOf": [{"required": ["paths"]}, {"required": ["tasks"]}]}
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

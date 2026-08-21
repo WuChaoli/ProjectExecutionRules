@@ -1,18 +1,19 @@
 # Architecture Rules
 
-## 事实来源
+## WHEN
 
 - `ARC-001`：架构判断必须基于当前模块、接口、依赖和数据流。
 
-## 执行规则
+## MUST
 
 - `ARC-002`：模块保持单一职责，通过明确接口协作。
 - `ARC-003`：外部资源必须在组合根显式装配，不得由核心模块隐式创建。
+- Invoke the Catalog-declared `architecture` Skill for the task workflow。
 
-## 验证要求
+## MUST
 
 - `ARC-004`：架构变更必须验证公共接口、依赖方向和关键数据流。
 
-## 职责边界
+## MUST NOT
 
 语言特有模块约束由对应 Profile Rules 管理。

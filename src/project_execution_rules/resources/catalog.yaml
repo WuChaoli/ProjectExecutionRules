@@ -1,9 +1,74 @@
-schema_version: 1
+schema_version: 2
 rules_version: 1.0.0
 
 profiles:
   python:
     - python
+
+skills:
+  git:
+    file: skills/git/SKILL.md
+    invocation: model
+    adapters:
+      - codex
+      - claude
+  pull-request:
+    file: skills/pull-request/SKILL.md
+    invocation: model
+    adapters:
+      - codex
+      - claude
+  debug:
+    file: skills/debug/SKILL.md
+    invocation: model
+    adapters:
+      - codex
+      - claude
+  observability:
+    file: skills/observability/SKILL.md
+    invocation: model
+    adapters:
+      - codex
+      - claude
+  architecture:
+    file: skills/architecture/SKILL.md
+    invocation: model
+    adapters:
+      - codex
+      - claude
+  external-services:
+    file: skills/external-services/SKILL.md
+    invocation: model
+    adapters:
+      - codex
+      - claude
+  rules-reviewer:
+    file: skills/rules-reviewer/SKILL.md
+    invocation: user
+    adapters:
+      - codex
+      - claude
+  agent-governance:
+    file: skills/agent-governance/SKILL.md
+    invocation: user
+    adapters:
+      - codex
+      - claude
+  tool-governance:
+    file: skills/tool-governance/SKILL.md
+    invocation: user
+    adapters:
+      - codex
+      - claude
+
+agents:
+  rules-reviewer:
+    file: agents/rules-reviewer.md
+    skills:
+      - pull-request
+    adapters:
+      - codex
+      - claude
 
 rules:
   security:
@@ -32,6 +97,8 @@ rules:
       - commit
       - merge
       - worktree
+    skills:
+      - git
     core: true
   pull-request:
     file: core/pull-request-rules.md
@@ -39,6 +106,10 @@ rules:
     tasks:
       - pull-request
       - pull-request-review
+    skills:
+      - pull-request
+    agents:
+      - rules-reviewer
     core: true
   ci-cd:
     file: core/ci-cd-rules.md
@@ -53,6 +124,8 @@ rules:
     tasks:
       - debug
       - troubleshoot
+    skills:
+      - debug
     core: true
   observability:
     file: core/observability-rules.md
@@ -61,6 +134,8 @@ rules:
       - logging
       - tracing
       - performance
+    skills:
+      - observability
     core: true
   architecture:
     file: core/architecture-rules.md
@@ -69,6 +144,8 @@ rules:
       - architecture
       - interface
       - data-flow
+    skills:
+      - architecture
     core: true
   external-services:
     file: core/external-services-rules.md
@@ -76,11 +153,15 @@ rules:
     tasks:
       - external-service
       - integration
+    skills:
+      - external-services
     core: true
   agent:
     file: core/agent-rules.md
     activation: explicit
     commands:
+      - agent-governance
+    skills:
       - agent-governance
     core: true
   tool:
@@ -88,12 +169,18 @@ rules:
     activation: explicit
     commands:
       - tool-governance
+    skills:
+      - tool-governance
     core: true
   harness:
     file: core/harness-rules.md
     activation: explicit
     commands:
       - rules-review
+    skills:
+      - rules-reviewer
+    agents:
+      - rules-reviewer
     core: true
   python:
     file: profiles/python/python-rules.md

@@ -9,9 +9,9 @@ from pathlib import Path
 from project_execution_rules.commands import CommandResult
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.managed import ManagedManifest, sha256_bytes
-from project_execution_rules.models import CheckIssue, CheckReport, ProjectState
+from project_execution_rules.models import AdapterId, CheckIssue, CheckReport, ProjectState
 from project_execution_rules.paths import UserPaths
-from project_execution_rules.yaml_utils import load_mapping
+from project_execution_rules.rulesets import load_ruleset
 
 CommandRunner = Callable[[tuple[str, ...]], CommandResult]
 
@@ -63,7 +63,7 @@ def run_doctor(
                 remediation="Add it only if the project needs explicit Codex configuration.",
             )
         )
-    manifest_path = paths.state_home / "managed-user.json"
+    manifest_path = paths.manifest_path(AdapterId.CODEX)
     if not manifest_path.is_file():
         issues.append(
             CheckIssue(
@@ -75,7 +75,10 @@ def run_doctor(
         )
     else:
         try:
-            manifest = ManagedManifest.load(manifest_path)
+            manifest = ManagedManifest.load(
+                manifest_path,
+                expected_adapter=AdapterId.CODEX,
+            )
             for entry in manifest.entries:
                 target = paths.home / entry.logical_path
                 try:
@@ -123,19 +126,14 @@ def run_doctor(
     ruleset_path = root / ".rules" / "ruleset.yaml"
     if ruleset_path.is_file():
         try:
-            ruleset = load_mapping(ruleset_path.read_text(encoding="utf-8"), name="Rule Set")
-            if ruleset.get("schema_version") != 1:
-                issues.append(
-                    CheckIssue(
-                        code="RULESET_SCHEMA_INCOMPATIBLE",
-                        message="project Rule Set schema is not supported",
-                    )
-                )
-        except (OSError, ValueError) as error:
+            load_ruleset(ruleset_path)
+        except ProjectRulesError as error:
             issues.append(
                 CheckIssue(
-                    code="RULESET_INVALID",
-                    message=f"project Rule Set is invalid: {error}",
+                    code=error.code,
+                    message=error.message,
+                    evidence=error.evidence,
+                    remediation=error.remediation,
                 )
             )
     if not (root / ".git").exists():

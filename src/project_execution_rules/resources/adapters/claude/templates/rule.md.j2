@@ -1,0 +1,6 @@
+{% if paths %}---
+paths:
+{% for path in paths %}  - {{ path | tojson }}
+{% endfor %}---
+
+{% endif %}{{ body | trim }}

@@ -3,26 +3,43 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Protocol
 
-from project_execution_rules.catalog import load_builtin_catalog
 from project_execution_rules.detection import ProjectFacts
 from project_execution_rules.doctor import probe_symlink_capability
 from project_execution_rules.errors import ProjectRulesError
-from project_execution_rules.managed import sha256_bytes
-from project_execution_rules.models import Change, ChangePlan, OperationReport
+from project_execution_rules.managed import (
+    ManagedManifest,
+    has_reparse_ancestor,
+    is_current_managed_file,
+    sha256_bytes,
+)
+from project_execution_rules.models import AdapterId, Change, ChangePlan, OperationReport
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.transactions import FileTransaction
+
+
+class ResourceSelection(Protocol):
+    @property
+    def rules(self) -> tuple[str, ...]: ...
+
+    @property
+    def skills(self) -> tuple[str, ...]: ...
+
+    @property
+    def agents(self) -> tuple[str, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
 class ProjectSelection:
     core_domains: tuple[str, ...]
     override_domains: tuple[str, ...] = ()
+    adapters: tuple[AdapterId, ...] = (AdapterId.CODEX,)
 
 
-def _append_ignore(existing: str, domains: tuple[str, ...]) -> str:
+def append_codex_ignore(existing: str, domains: tuple[str, ...]) -> str:
     lines = existing.splitlines()
     for domain in domains:
         entry = f".rules/{domain}-rules.md"
@@ -31,7 +48,7 @@ def _append_ignore(existing: str, domains: tuple[str, ...]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _change_required(change: Change) -> bool:
+def project_change_required(change: Change) -> bool:
     if change.action == "write":
         return (
             change.target.is_symlink()
@@ -49,6 +66,186 @@ def _change_required(change: Change) -> bool:
     return True
 
 
+def expected_manifest_entries(
+    adapter: AdapterId,
+    selection: ResourceSelection,
+) -> dict[str, str]:
+    rules = selection.rules
+    skills = selection.skills
+    agents = selection.agents
+    if adapter is AdapterId.CLAUDE:
+        return {
+            **{f"rules/{item}.md": "rule" for item in rules},
+            **{f"skills/{item}/SKILL.md": "skill" for item in skills},
+            **{f"agents/{item}.md": "agent" for item in agents},
+        }
+    return {
+        **{f".agents/rules/{item}-rules.md": "rule" for item in rules},
+        ".agents/rules/catalog.yaml": "rule",
+        ".agents/rules/review-report.schema.json": "rule",
+        **{f".codex/skills/{item}/SKILL.md": "skill" for item in skills},
+        **{f".codex/agents/{item}.toml": "agent" for item in agents},
+    }
+
+
+def validate_user_install(
+    adapter: AdapterId,
+    selection: ProjectSelection,
+    paths: UserPaths,
+) -> None:
+    from project_execution_rules.catalog import load_builtin_catalog
+    from project_execution_rules.selection import resolve_catalog_selection
+
+    manifest_path = paths.manifest_path(adapter)
+    if not manifest_path.is_file():
+        raise ProjectRulesError(
+            "USER_ADAPTER_NOT_INSTALLED",
+            f"selected Adapter is not installed: {adapter.value}",
+            evidence={"adapter": adapter.value, "manifest": str(manifest_path)},
+            remediation=f"Run `project-rules install --adapter {adapter.value}` first.",
+        )
+    manifest = ManagedManifest.load(manifest_path, expected_adapter=adapter)
+    catalog = load_builtin_catalog()
+    if manifest.resource_version != catalog.rules_version:
+        raise ProjectRulesError(
+            "USER_ADAPTER_CLOSURE_MISMATCH",
+            f"installed Adapter version does not match the Catalog: {adapter.value}",
+            evidence={
+                "adapter": adapter.value,
+                "installed": manifest.resource_version,
+                "required": catalog.rules_version,
+            },
+            remediation=f"Run `project-rules install --adapter {adapter.value}`.",
+        )
+    required = resolve_catalog_selection(
+        catalog,
+        selection.core_domains + catalog.profiles["python"],
+        adapter=adapter,
+    )
+    selected = manifest.selection
+    try:
+        installed_closure = resolve_catalog_selection(
+            catalog,
+            selected.rules,
+            adapter=adapter,
+        )
+    except ValueError as error:
+        raise ProjectRulesError(
+            "USER_ADAPTER_CLOSURE_MISMATCH",
+            f"installed Adapter selection is not a Catalog closure: {adapter.value}",
+            evidence={"adapter": adapter.value, "error": str(error)},
+            remediation=f"Run `project-rules install --adapter {adapter.value}`.",
+        ) from error
+    expected_selection = (
+        set(installed_closure.rules),
+        set(installed_closure.skills),
+        set(installed_closure.agents),
+    )
+    actual_selection = (set(selected.rules), set(selected.skills), set(selected.agents))
+    expected_entries = expected_manifest_entries(adapter, selected)
+    entries = {entry.logical_path: entry for entry in manifest.entries}
+    if (
+        expected_selection != actual_selection
+        or {path: entry.kind for path, entry in entries.items()} != expected_entries
+    ):
+        raise ProjectRulesError(
+            "USER_ADAPTER_CLOSURE_MISMATCH",
+            f"installed Adapter manifest is not the exact Catalog closure: {adapter.value}",
+            evidence={"adapter": adapter.value},
+            remediation=f"Run `project-rules install --adapter {adapter.value}`.",
+        )
+    if not (
+        set(required.rules) <= set(selected.rules)
+        and set(required.skills) <= set(selected.skills)
+        and set(required.agents) <= set(selected.agents)
+    ):
+        raise ProjectRulesError(
+            "USER_ADAPTER_CLOSURE_MISMATCH",
+            f"installed Adapter closure does not cover project selection: {adapter.value}",
+            evidence={"adapter": adapter.value},
+        )
+    adapter_home = paths.home if adapter is AdapterId.CODEX else paths.claude_home
+    for entry in manifest.entries:
+        target = adapter_home / entry.logical_path
+        if not is_current_managed_file(
+            target,
+            expected_adapter=adapter,
+            adapter_home=adapter_home,
+            manifest_path=manifest_path,
+        ):
+            raise ProjectRulesError(
+                "USER_ADAPTER_CLOSURE_MISMATCH",
+                f"installed Adapter resource does not match its manifest: {adapter.value}",
+                evidence={"adapter": adapter.value, "target": str(target)},
+            )
+
+
+def compose_project_changes(
+    root: Path,
+    plans: tuple[tuple[AdapterId, ChangePlan], ...],
+) -> tuple[Change, ...]:
+    resolved_root = root.resolve()
+    lexical_root = Path(os.path.abspath(root))
+    reserved = lexical_root / ".rules" / "ruleset.yaml"
+    changes: list[Change] = []
+    owners: dict[Path, tuple[AdapterId, Change]] = {}
+    for adapter, plan in plans:
+        for change in plan.changes:
+            candidate = Path(os.path.abspath(change.target))
+            try:
+                candidate.relative_to(lexical_root)
+            except ValueError as error:
+                raise ProjectRulesError(
+                    "ADAPTER_PROJECT_CONTRACT",
+                    f"Adapter planned a target outside the project: {change.target}",
+                    evidence={"adapter": adapter.value, "target": str(change.target)},
+                ) from error
+            if candidate == reserved:
+                raise ProjectRulesError(
+                    "ADAPTER_PROJECT_CONTRACT",
+                    "Adapter planned the orchestrator-reserved Rule Set target",
+                    evidence={"adapter": adapter.value, "target": str(change.target)},
+                )
+            if has_reparse_ancestor(candidate.parent, root=lexical_root):
+                raise ProjectRulesError(
+                    "ADAPTER_PROJECT_CONTRACT",
+                    f"Adapter planned a target through an unsafe project path: {change.target}",
+                    evidence={"adapter": adapter.value, "target": str(change.target)},
+                )
+            canonical_parent = candidate.parent.resolve(strict=False)
+            try:
+                canonical_parent.relative_to(resolved_root)
+            except ValueError as error:
+                raise ProjectRulesError(
+                    "ADAPTER_PROJECT_CONTRACT",
+                    f"Adapter planned a target outside the project: {change.target}",
+                    evidence={"adapter": adapter.value, "target": str(change.target)},
+                ) from error
+            safe_target = canonical_parent / candidate.name
+            normalized = Change(
+                action=change.action,
+                target=safe_target,
+                content=change.content,
+                link_target=change.link_target,
+            )
+            previous = owners.get(safe_target)
+            if previous is not None:
+                previous_adapter, previous_change = previous
+                if previous_change != normalized:
+                    raise ProjectRulesError(
+                        "ADAPTER_PROJECT_COLLISION",
+                        f"Adapters plan conflicting project changes: {safe_target}",
+                        evidence={
+                            "target": str(safe_target),
+                            "adapters": [previous_adapter.value, adapter.value],
+                        },
+                    )
+                continue
+            owners[safe_target] = (adapter, normalized)
+            changes.append(normalized)
+    return tuple(changes)
+
+
 def plan_project_init(
     root: Path,
     facts: ProjectFacts,
@@ -56,14 +253,16 @@ def plan_project_init(
     paths: UserPaths,
     *,
     verify_user_install: bool = True,
+    adapters: tuple[AdapterId, ...] | None = None,
 ) -> ChangePlan:
-    from project_execution_rules.rendering import (
-        render_agents,
-        render_python_override,
-        render_ruleset,
-    )
+    from project_execution_rules.adapters import get_adapter, normalize_adapters
+    from project_execution_rules.rendering import render_ruleset
 
-    resolved = root.resolve()
+    selected_adapters = normalize_adapters(adapters or selection.adapters)
+    resolved_root = root.resolve()
+    resolved_facts = replace(facts, root=resolved_root)
+    if not selected_adapters:
+        raise ProjectRulesError("ADAPTER_REQUIRED", "at least one project Adapter is required")
     if not facts.is_git:
         raise ProjectRulesError(
             "GIT_REPOSITORY_MISSING",
@@ -74,68 +273,38 @@ def plan_project_init(
             "PROFILE_UNSUPPORTED",
             "the first release supports Python projects only",
         )
-    catalog = load_builtin_catalog()
-    domains = selection.core_domains + catalog.profiles["python"]
-    for domain in domains:
-        if domain not in catalog.rules:
-            raise ProjectRulesError("RULE_UNKNOWN", f"unknown Rule domain: {domain}")
-        if verify_user_install and not (paths.rules_home / f"{domain}-rules.md").is_file():
-            raise ProjectRulesError(
-                "USER_RULE_MISSING",
-                f"user Rule is not installed: {domain}",
-            )
-    changes: list[Change] = []
-    rules_dir = resolved / ".rules"
-    for domain in domains:
-        changes.append(
-            Change(
-                action="symlink",
-                target=rules_dir / f"{domain}-rules.md",
-                link_target=paths.rules_home / f"{domain}-rules.md",
-            )
+    if verify_user_install:
+        for adapter in selected_adapters:
+            validate_user_install(adapter, selection, paths)
+    adapter_plans = tuple(
+        (
+            adapter,
+            get_adapter(adapter).plan_project_init(
+                resolved_root,
+                resolved_facts,
+                selection,
+                paths,
+                verify_user_install=False,
+            ),
         )
-    for domain in selection.override_domains:
-        if domain != "python":
-            raise ProjectRulesError(
-                "OVERRIDE_UNSUPPORTED",
-                f"no real project override renderer exists for {domain}",
-            )
-        content = render_python_override(facts).encode()
-        changes.append(
-            Change(
-                action="write",
-                target=rules_dir / "python-rules.override.md",
-                content=content,
-            )
+        for adapter in selected_adapters
+    )
+    changes = list(compose_project_changes(resolved_root, adapter_plans))
+    ruleset_target = resolved_root / ".rules" / "ruleset.yaml"
+    if has_reparse_ancestor(ruleset_target.parent, root=resolved_root):
+        raise ProjectRulesError(
+            "ADAPTER_PROJECT_CONTRACT",
+            "shared Rule Set target uses an unsafe project path",
+            evidence={"target": str(ruleset_target)},
         )
-    changes.extend(
-        [
-            Change(
-                action="write",
-                target=rules_dir / "ruleset.yaml",
-                content=render_ruleset(selection).encode(),
-            ),
-            Change(
-                action="write",
-                target=resolved / "AGENTS.md",
-                content=render_agents(selection).encode(),
-            ),
-            Change(
-                action="write",
-                target=resolved / ".gitignore",
-                content=_append_ignore(
-                    (resolved / ".gitignore").read_text(encoding="utf-8")
-                    if (resolved / ".gitignore").is_file()
-                    else "",
-                    domains,
-                ).encode(),
-            ),
-        ]
+    ruleset = Change(
+        action="write",
+        target=ruleset_target,
+        content=render_ruleset(selection, adapters=selected_adapters).encode(),
     )
-    return ChangePlan(
-        scope="project",
-        changes=tuple(change for change in changes if _change_required(change)),
-    )
+    if project_change_required(ruleset):
+        changes.append(ruleset)
+    return ChangePlan(scope="project", changes=tuple(changes))
 
 
 def _default_stage(root: Path, files: tuple[Path, ...]) -> None:
@@ -174,8 +343,10 @@ def initialize_project(
         return OperationReport(changed=False, transaction_id=None, changes=())
     if not plan.changes:
         return OperationReport(changed=False, transaction_id=None, changes=())
+    resolved_root = root.resolve()
     probe = symlink_probe or (lambda: probe_symlink_capability(paths))
-    if not probe():
+    has_symlinks = any(change.action == "symlink" for change in plan.changes)
+    if has_symlinks and not probe():
         raise ProjectRulesError(
             "SYMLINK_UNAVAILABLE",
             "Windows symbolic link creation is unavailable",
@@ -184,7 +355,7 @@ def initialize_project(
     verifier = link_verifier or _actual_link_verifier
     transaction = FileTransaction(
         paths.state_home,
-        root,
+        resolved_root,
         symlink_factory=symlink_factory,
     )
     for change in plan.changes:
@@ -215,12 +386,12 @@ def initialize_project(
         for change in plan.changes
         if change.action == "write"
         and (
-            change.target.name in {"AGENTS.md", ".gitignore", "ruleset.yaml"}
-            or change.target.name.endswith(".override.md")
+            change.target.name in {"AGENTS.md", "CLAUDE.md", "ruleset.yaml"}
+            or change.target.name.endswith((".override.md", ".project.md"))
         )
     )
     if stage_files is None:
-        _default_stage(root, staged)
+        _default_stage(resolved_root, staged)
     else:
         stage_files(staged)
     transaction_id = transaction.transaction_id

@@ -1,0 +1,7 @@
+---
+name: {{ name }}
+description: {{ description | tojson }}
+{% if disable_model_invocation %}disable-model-invocation: true
+{% endif %}---
+
+{{ body | trim }}

@@ -1,0 +1,9 @@
+---
+name: {{ name }}
+description: {{ description | tojson }}
+{% if skills %}skills:
+{% for skill in skills %}  - {{ skill }}
+{% endfor %}{% else %}skills: []
+{% endif %}---
+
+{{ body | trim }}

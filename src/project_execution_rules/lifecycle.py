@@ -8,8 +8,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-import yaml
-
 from project_execution_rules.catalog import resource_root
 from project_execution_rules.errors import ProjectRulesError
 from project_execution_rules.initialize import ProjectSelection
@@ -17,11 +15,20 @@ from project_execution_rules.install import plan_user_install
 from project_execution_rules.managed import (
     ManagedManifest,
     is_current_managed_file,
+    is_safe_adapter_file,
     sha256_bytes,
 )
-from project_execution_rules.models import Change, ChangePlan, OperationReport, RuleCatalog
+from project_execution_rules.models import (
+    AdapterId,
+    Change,
+    ChangePlan,
+    OperationReport,
+    RuleCatalog,
+    RuleSet,
+)
 from project_execution_rules.paths import UserPaths
 from project_execution_rules.rendering import render_agents
+from project_execution_rules.rulesets import load_ruleset, render_ruleset
 from project_execution_rules.transactions import FileTransaction, resolve_target_within_root
 from project_execution_rules.yaml_utils import (
     as_mapping,
@@ -66,10 +73,13 @@ def summarize_update(
             modified.append(domain)
             affected_files.append(str(target))
     deprecated: list[str] = []
-    manifest_path = paths.state_home / "managed-user.json"
+    manifest_path = paths.manifest_path(AdapterId.CODEX)
     from_version: str | None = None
     if manifest_path.is_file():
-        manifest = ManagedManifest.load(manifest_path)
+        manifest = ManagedManifest.load(
+            manifest_path,
+            expected_adapter=AdapterId.CODEX,
+        )
         from_version = manifest.resource_version
         for entry in manifest.entries:
             if (
@@ -116,9 +126,8 @@ def summarize_update(
     ruleset_path = root.resolve() / ".rules" / "ruleset.yaml"
     if ruleset_path.is_file():
         try:
-            ruleset = load_mapping(ruleset_path.read_text(encoding="utf-8"), name="Rule Set")
-            schema_compatible = ruleset.get("schema_version") == catalog.schema_version
-        except (OSError, ValueError):
+            load_ruleset(ruleset_path)
+        except ProjectRulesError:
             schema_compatible = False
     return {
         "rules_version": {
@@ -142,15 +151,19 @@ def summarize_update(
 
 
 def plan_project_update(root: Path, catalog: RuleCatalog) -> ChangePlan:
-    raw = _load_ruleset(root.resolve())
-    if raw.get("rules_version") == catalog.rules_version:
+    ruleset = load_ruleset(root.resolve() / ".rules" / "ruleset.yaml")
+    if ruleset.rules_version == catalog.rules_version:
         return ChangePlan(scope="project", changes=())
-    raw["rules_version"] = catalog.rules_version
-    content = yaml.safe_dump(
-        raw,
-        allow_unicode=True,
-        sort_keys=False,
-    ).encode()
+    updated = RuleSet(
+        schema_version=ruleset.schema_version,
+        rules_version=catalog.rules_version,
+        adapters=ruleset.adapters,
+        profile=ruleset.profile,
+        core_domains=ruleset.core_domains,
+        profile_domains=ruleset.profile_domains,
+        overrides=ruleset.overrides,
+    )
+    content = render_ruleset(updated).encode()
     return ChangePlan(
         scope="project",
         changes=(
@@ -163,17 +176,14 @@ def plan_project_update(root: Path, catalog: RuleCatalog) -> ChangePlan:
     )
 
 
-def _load_ruleset(root: Path) -> dict[str, object]:
+def _load_ruleset(root: Path) -> RuleSet:
     path = root / ".rules" / "ruleset.yaml"
     if not path.is_file():
         raise ProjectRulesError(
             "RULESET_MISSING",
             "project Rule Set does not exist",
         )
-    try:
-        return load_mapping(path.read_text(encoding="utf-8"), name="Rule Set")
-    except ValueError as error:
-        raise ProjectRulesError("RULESET_INVALID", str(error)) from error
+    return load_ruleset(path)
 
 
 def _actual_link_verifier(link: Path, target: Path) -> bool:
@@ -187,13 +197,9 @@ def plan_repair(
     link_verifier: Callable[[Path, Path], bool] = _actual_link_verifier,
 ) -> ChangePlan:
     resolved = root.resolve()
-    raw = _load_ruleset(resolved)
-    try:
-        domains_raw = as_mapping(raw.get("domains", {}), name="Rule Set domains")
-        core = as_string_tuple(domains_raw.get("core", ()), name="Core domains")
-        profile = as_string_tuple(domains_raw.get("profile", ()), name="Profile domains")
-    except ValueError as error:
-        raise ProjectRulesError("RULESET_INVALID", str(error)) from error
+    ruleset = _load_ruleset(resolved)
+    core = ruleset.core_domains
+    profile = ruleset.profile_domains
     changes: list[Change] = []
     for domain in core + profile:
         link = resolved / ".rules" / f"{domain}-rules.md"
@@ -220,14 +226,8 @@ def plan_uninstall(
     include_user: bool,
 ) -> ChangePlan:
     resolved = root.resolve()
-    raw = _load_ruleset(resolved)
-    try:
-        domains_raw = as_mapping(raw.get("domains", {}), name="Rule Set domains")
-        core = as_string_tuple(domains_raw.get("core", ()), name="Core domains")
-        profile = as_string_tuple(domains_raw.get("profile", ()), name="Profile domains")
-        domains = core + profile
-    except ValueError as error:
-        raise ProjectRulesError("RULESET_INVALID", str(error)) from error
+    ruleset = _load_ruleset(resolved)
+    domains = ruleset.domains
     changes: list[Change] = []
     for domain in domains:
         link = resolved / ".rules" / f"{domain}-rules.md"
@@ -242,7 +242,7 @@ def plan_uninstall(
         changes.append(Change(action="remove", target=link))
     changes.append(Change(action="remove", target=resolved / ".rules" / "ruleset.yaml"))
     agents = resolved / "AGENTS.md"
-    desired_agents = render_agents(ProjectSelection(core_domains=core))
+    desired_agents = render_agents(ProjectSelection(core_domains=ruleset.core_domains))
     if agents.is_file() and agents.read_text(encoding="utf-8") == desired_agents:
         changes.append(Change(action="remove", target=agents))
     if include_user:
@@ -254,24 +254,18 @@ def plan_uninstall(
 
 
 def plan_user_uninstall(paths: UserPaths) -> ChangePlan:
-    manifest_path = paths.state_home / "managed-user.json"
+    manifest_path = paths.manifest_path(AdapterId.CODEX)
     if not manifest_path.is_file():
         return ChangePlan(scope="user", changes=())
-    manifest = ManagedManifest.load(manifest_path)
+    manifest = ManagedManifest.load(
+        manifest_path,
+        expected_adapter=AdapterId.CODEX,
+    )
     changes: list[Change] = []
     for entry in manifest.entries:
         target = paths.home / Path(entry.logical_path)
-        try:
-            target.absolute().relative_to(paths.home.resolve())
-            target.parent.resolve(strict=False).relative_to(paths.home.resolve())
-        except ValueError as error:
-            raise ProjectRulesError(
-                "MANAGED_RESOURCE_PATH_INVALID",
-                f"managed resource path escapes the user home: {entry.logical_path}",
-            ) from error
         if (
-            not target.is_symlink()
-            and target.is_file()
+            is_safe_adapter_file(target, adapter_home=paths.home)
             and sha256_bytes(target.read_bytes()) == entry.sha256
         ):
             changes.append(Change(action="remove", target=target))
@@ -297,8 +291,9 @@ def apply_lifecycle_plan(
                 change.link_target is None
                 or not is_current_managed_file(
                     change.link_target,
-                    paths_home=paths.home,
-                    manifest_path=paths.state_home / "managed-user.json",
+                    expected_adapter=AdapterId.CODEX,
+                    adapter_home=paths.home,
+                    manifest_path=paths.manifest_path(AdapterId.CODEX),
                 )
             ):
                 raise ProjectRulesError(
@@ -311,6 +306,7 @@ def apply_lifecycle_plan(
     transaction = FileTransaction(
         paths.state_home,
         authorized_root,
+        adapter=AdapterId.CODEX if plan.scope == "user" else None,
         symlink_factory=symlink_factory,
     )
     for change in plan.changes:
@@ -350,7 +346,39 @@ def apply_lifecycle_plan(
     return OperationReport(True, transaction_id, plan.changes)
 
 
-def rollback_transaction(paths: UserPaths, transaction_id: str) -> None:
+def _validate_transaction_adapter(
+    raw: dict[str, object],
+    *,
+    expected_adapter: AdapterId | str | None,
+) -> None:
+    if expected_adapter is None:
+        return
+    expected = AdapterId(expected_adapter)
+    try:
+        actual = AdapterId(as_string(raw["adapter"], name="transaction Adapter"))
+    except (KeyError, TypeError, ValueError) as error:
+        raise ProjectRulesError(
+            "TRANSACTION_ADAPTER_INVALID",
+            "transaction Adapter metadata is missing or invalid",
+            evidence={"expected_adapter": expected.value},
+        ) from error
+    if actual is not expected:
+        raise ProjectRulesError(
+            "TRANSACTION_ADAPTER_MISMATCH",
+            f"transaction belongs to Adapter {actual.value}, not {expected.value}",
+            evidence={
+                "expected_adapter": expected.value,
+                "actual_adapter": actual.value,
+            },
+        )
+
+
+def rollback_transaction(
+    paths: UserPaths,
+    transaction_id: str,
+    *,
+    expected_adapter: AdapterId | str | None = None,
+) -> None:
     if not transaction_id or any(
         character not in "0123456789abcdef" for character in transaction_id
     ):
@@ -369,6 +397,7 @@ def rollback_transaction(paths: UserPaths, transaction_id: str) -> None:
         cast(object, json.loads(manifest_path.read_text(encoding="utf-8"))),
         name="transaction manifest",
     )
+    _validate_transaction_adapter(raw, expected_adapter=expected_adapter)
     authorized_root = Path(as_string(raw["authorized_root"], name="authorized_root")).resolve()
     originals = as_object_tuple(raw.get("originals", ()), name="transaction originals")
     for original_value in reversed(originals):
@@ -466,7 +495,12 @@ def rollback_transaction(paths: UserPaths, transaction_id: str) -> None:
             shutil.rmtree(path)
 
 
-def plan_rollback(paths: UserPaths, transaction_id: str) -> ChangePlan:
+def plan_rollback(
+    paths: UserPaths,
+    transaction_id: str,
+    *,
+    expected_adapter: AdapterId | str | None = None,
+) -> ChangePlan:
     if not transaction_id or any(
         character not in "0123456789abcdef" for character in transaction_id
     ):
@@ -484,6 +518,7 @@ def plan_rollback(paths: UserPaths, transaction_id: str) -> ChangePlan:
         cast(object, json.loads(manifest_path.read_text(encoding="utf-8"))),
         name="transaction manifest",
     )
+    _validate_transaction_adapter(raw, expected_adapter=expected_adapter)
     authorized_root = Path(as_string(raw["authorized_root"], name="authorized_root")).resolve()
     originals = as_object_tuple(raw.get("originals", ()), name="transaction originals")
     changes: list[Change] = []

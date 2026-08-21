@@ -1,3 +1,15 @@
-schema_version: 1
-adapter: codex
-profile: python
+schema_version: 2
+rules_version: {{ rules_version }}
+adapters:
+{% for adapter in adapters %}  - {{ adapter }}
+{% endfor %}profile: {{ profile }}
+domains:
+  core:
+{% for domain in core_domains %}    - {{ domain }}
+{% endfor %}  profile:
+{% for domain in profile_domains %}    - {{ domain }}
+{% endfor %}overrides:
+{% for adapter, domains in overrides.items() %}  {{ adapter }}:{% if domains %}
+{% for domain in domains %}    - {{ domain }}
+{% endfor %}{% else %} []
+{% endif %}{% endfor %}
